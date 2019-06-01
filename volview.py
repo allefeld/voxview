@@ -195,43 +195,77 @@ glVertexAttribPointer(posAttrib, 2, GL_FLOAT, False, 0, ctypes.c_voidp(0))
 
 # ------------------------------------------------------------------------------
 
-# load data
-img = nib.load("mni_icbm152_nlin_asym_09c/mni_icbm152_gm_tal_nlin_asym_09c.nii")
-# volume data
-vol = img.get_fdata(dtype=np.float16)
-vol[0, 0, 0] = 1                # left–posterior–inferior-most marker voxel
-# threshold
-threshold = 0.15
-# affine transformation
-#   rotation & scaling matrix (voxel -> world)
-AM = img.affine[:3, :3]
-# translation (voxel -> world), position of voxel [0, 0, 0]
-AO = img.affine[:3, 3]
-#   inverse rotation & scaling (world -> voxel)
-AiM = np.linalg.inv(AM)
 
-# pass volume data as texture -> uniform sampler3D
-texture = glGenTextures(1)
-glUniform1i(glGetUniformLocation(program, "vol"), 0)
-glActiveTexture(GL_TEXTURE0 + 0)
-glBindTexture(GL_TEXTURE_3D, texture)
-glTexImage3D(GL_TEXTURE_3D, 0, GL_R16F,
-             vol.shape[0], vol.shape[1], vol.shape[2],
-             0, GL_RED, GL_FLOAT, vol.flatten('F'))
-# should the following two be necessary when using texelFetch?!
-glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAX_LEVEL, 0)
-glClampColor(GL_CLAMP_READ_COLOR, GL_FALSE)
-glEnable(GL_TEXTURE_3D)
+filenames = ["mni_icbm152_nlin_asym_09c/mni_icbm152_gm_tal_nlin_asym_09c.nii",
+             "mni_icbm152_nlin_asym_09c/mni_icbm152_wm_tal_nlin_asym_09c.nii"]
 
-# pass threshold
-glUniform1f(glGetUniformLocation(program, "threshold"), threshold)
+for volID in range(len(filenames)):
+    # load data
+    img = nib.load(filenames[volID])
+    # volume data
+    data = img.get_fdata(dtype=np.float16)
+    # affine transformation
+    #   rotation & scaling matrix (voxel -> world)
+    AM = img.affine[:3, :3]
+    # translation (voxel -> world), position of voxel [0, 0, 0]
+    AO = img.affine[:3, 3]
+    if volID == 1:
+        AO[0] += 100;
+    #   inverse rotation & scaling (world -> voxel)
+    AiM = np.linalg.inv(AM)
 
-# pass affine transformation
-glUniformMatrix3fv(glGetUniformLocation(program, "AM"), 1, GL_FALSE,
-                   struct.pack('f' * 9, *AM.flatten('F')))
-glUniform3f(glGetUniformLocation(program, "AO"), *AO)
-glUniformMatrix3fv(glGetUniformLocation(program, "AiM"), 1, GL_FALSE,
-                   struct.pack('f' * 9, *AiM.flatten('F')))
+    # pass volume data as texture -> uniform sampler3D
+    texture = glGenTextures(1)
+    glUniform1i(glGetUniformLocation(program, "vol[%d].data" % volID),
+                volID)
+    glActiveTexture(GL_TEXTURE0 + volID)
+    glBindTexture(GL_TEXTURE_3D, texture)
+    glTexImage3D(GL_TEXTURE_3D, 0, GL_R16F, *data.shape,
+                 0, GL_RED, GL_FLOAT, data.flatten('F'))
+    # should the following two be necessary when using texelFetch?!
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAX_LEVEL, 0)
+    glClampColor(GL_CLAMP_READ_COLOR, GL_FALSE)
+    glEnable(GL_TEXTURE_3D)
+
+    # pass affine transformation
+    glUniformMatrix3fv(glGetUniformLocation(program, "vol[%d].AM" % volID),
+                       1, GL_FALSE, *AM.flatten('F'))
+    # TODO: struct.pack necessary?
+    glUniform3f(glGetUniformLocation(program, "vol[%d].AO" % volID), *AO)
+    glUniformMatrix3fv(glGetUniformLocation(program, "vol[%d].AiM" % volID),
+                       1, GL_FALSE, struct.pack('f' * 9, *AiM.flatten('F')))
+
+for surfID in range(2):
+    # define surface
+    volID = surfID
+    threshold = 0.15
+    if surfID == 1:
+        ka = np.array([0.1567, 0.1063, 0.0130])
+        kd = np.array([0.3712, 0.2705, 0.0541])
+        ks = np.array([0.4720, 0.4477, 0.3843])
+        alpha = 27.89
+    else:
+        ka = np.array([0.02, 0.02, 0.02])
+        kd = np.array([0.01, 0.01, 0.01])
+        ks = np.array([0.4, 0.4, 0.4])
+        alpha = 10.
+
+    # pass volume ID
+    glUniform1i(glGetUniformLocation(program, "surf[%d].volID" % surfID),
+                volID)
+    # pass threshold
+    glUniform1f(glGetUniformLocation(program, "surf[%d].threshold" % surfID),
+                threshold)
+    # pass Phong coefficients
+    glUniform3f(glGetUniformLocation(program, "surf[%d].ka" % surfID),
+                *ka)
+    glUniform3f(glGetUniformLocation(program, "surf[%d].kd" % surfID),
+                *kd)
+    glUniform3f(glGetUniformLocation(program, "surf[%d].ks" % surfID),
+                *ks)
+    glUniform1f(glGetUniformLocation(program, "surf[%d].alpha" % surfID),
+                alpha)
+
 
 # ------------------------------------------------------------------------------
 

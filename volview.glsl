@@ -2,38 +2,38 @@
 //#define AA
 #define DEBUG
 
+#define NVOLS 2
+#define NSURFS 2
+
 
 // TODO: fix weird rendering artefact, especially visible for single voxel
 
-// volume data
-uniform sampler3D vol;
 
-// volume coordinate system (affine transformation
-uniform mat3 AM;
-uniform vec3 AO;
-uniform mat3 AiM;
+// volumes
+struct Volume {
+    // volume data
+    sampler3D data;
+    // volume coordinate system (affine transformation)
+    mat3 AM;        // matrix voxel -> world
+    vec3 AO;        // offset voxel -> world
+    mat3 AiM;       // matrix world -> voxel
+};
+uniform Volume vol[NVOLS];
 
-// value at which the volume is to be thresholded
-uniform float threshold;
 
-// how the volume appears: coefficients for Phong illumination
-//   see http://devernay.free.fr/cours/opengl/materials.html
-// "brass"
-const vec3 ka = vec3(0.329412, 0.223529, 0.027451);
-const vec3 kd = vec3(0.780392, 0.568627, 0.113725);
-const vec3 ks = vec3(0.992157, 0.941176, 0.807843);
-const float alpha = 27.89744;
-//// "black rubber"
-//const vec3 ka = vec3(0.02, 0.02, 0.02);
-//const vec3 kd = vec3(0.01, 0.01, 0.01);
-//const vec3 ks = vec3(0.4, 0.4, 0.4);
-//const float alpha = 10.;
-//// "jade"
-//const vec3 ka = vec3(0.135, 0.2225, 0.1575);
-//const vec3 kd = vec3(0.54, 0.89, 0.63);
-//const vec3 ks = vec3(0.316228, 0.316228, 0.316228);
-//const float alpha = 12.8;
-
+// surfaces
+struct Surface {
+    // volume to be thresholded
+    int volID;
+    // threshold value
+    float threshold;
+    // appearance: Phong illumination coefficients
+    vec3 ka;        // ambient
+    vec3 kd;        // diffuse
+    vec3 ks;        // specular
+    float alpha;    // shininess
+};
+uniform Surface surf[NSURFS];
 
 // direction of light
 const vec3 lightDir = normalize(vec3(-2., 1., 1.));
@@ -63,16 +63,18 @@ vec3 background(in vec3 ray) {
 // cube tracing algorithm – trilinear
 //   Processes a line segment from the grid tracing algorithm, to find the point
 // at which the ray intersects with a surface defined within each grid cube.
-// The surface is defined by trilinear interpolation crossing `threshold`.
+// The surface is defined by trilinear interpolation crossing the threshold.
 // in
-//   vec3 pos:      entry point into grid cube (can be within)
-//   vec3 posNext:  exit point from the grid cube
+//   int volID          ID of volume
+//   float threshold    threshold defining the surface
+//   vec3 pos:          entry point into grid cube (can be within)
+//   vec3 posNext:      exit point from the grid cube
 // out
-//   vec3 p:        intersection point of ray and surface
-//   vec3 n:        normal vector of the surface at the intersection point
+//   vec3 p:            intersection point of ray and surface
+//   vec3 n:            normal vector of the surface at the intersection point
 // returns
-//   bool:          whether an intersection point was found
-bool cubetracer(in vec3 pos, in vec3 posNext,
+//   bool:              whether an intersection point was found
+bool cubetracer(in int volID, in float threshold, in vec3 pos, in vec3 posNext,
                   out vec3 p, out vec3 n) {
     int i, j, k;
     float v[2][2][2];
@@ -84,7 +86,8 @@ bool cubetracer(in vec3 pos, in vec3 posNext,
     for (i = 0; i < 2; i++) {
         for (j = 0; j < 2; j++) {
             for (k = 0; k < 2; k++) {
-                v[i][j][k] = texelFetch(vol, lower + ivec3(i, j, k), 0).r;
+                v[i][j][k] = texelFetch(vol[volID].data,
+                    lower + ivec3(i, j, k), 0).r;
                 if (v[i][j][k] > vMax) { vMax = v[i][j][k]; }
                 if (v[i][j][k] < vMin) { vMin = v[i][j][k]; }
             }
@@ -222,19 +225,19 @@ bool cubetracer(in vec3 pos, in vec3 posNext,
 //   The line segments are then processed by `cubetracer` to find the point at
 // which the ray intersects with a surface defined within each grid cube.
 // in
-//   int id:        which volume to traverse            TODO
-//   vec3 start:    from where
-//   vec3 dir:      in which direction (normalized!)
+//   int volID          ID of volume
+//   float threshold    threshold defining the surface
+//   vec3 start:        from where
+//   vec3 dir:          in which direction (normalized!)
 // out
-//   float d:       at what distance
-//                  The value 0 indicates that start is within the surface,
-//                  the value inf that no surface was encountered. In that case,
-//                  n is undefined.
-//   vec3 n:        normal vector of the surface
-void gridtracer(in int id, in vec3 start, in vec3 dir,
+//   float d:           at what distance
+//                        The value inf indicates that no surface was
+//                      encountered. In that case, n is undefined.
+//   vec3 n:            normal vector of the surface
+void gridtracer(in int volID, in float threshold, in vec3 start, in vec3 dir,
                 out float d, out vec3 n) {
     // extent of volume
-    vec3 shape = textureSize(vol, 0);
+    vec3 shape = textureSize(vol[volID].data, 0);
     // 1) Get the first point.
     vec3 pos;
     // Check whether the start position lies within the extended grid.
@@ -309,7 +312,7 @@ void gridtracer(in int id, in vec3 start, in vec3 dir,
 
         // 3) Process the line segment.
         vec3 p;
-        if (cubetracer(pos, posNext, p, n)) {
+        if (cubetracer(volID, threshold, pos, posNext, p, n)) {
             d = dot((p - start), dir);
             return;
         }
@@ -350,37 +353,48 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
     vec3 ray = normalize(camMatrix * vec3(coord, 1.0));
 
     // trace the volume grid
-    // TODO: multiple volumes
-    //   transform camPos & ray from world into voxel space
-    vec3 vcp = AiM * (camPos - AO);
-    vec3 vr = AiM * ray;
-    // find intersection of ray with surface in voxel space
-    float vd;   // for voxel-space distance
-    vec3 vn;    // for voxel-space normal vector
-    gridtracer(1, vcp, vr, vd, vn);
-    //   position of intersection in voxel space
-    vec3 vp = vcp + vd * vr;
-    //   transform position from voxel into world space
-    vec3 p = AM * vp + AO;
-    //   transform normal vector from voxel into world space
-    //     The normal vector (derived from the gradient) is an element of the
-    //   dual space and therefore transforms covariantly. The reason is that
-    //   orthogonality must be preserved:
-    //     n' v = 0, w = M v, m = N n such that m' w = 0
-    //     0 = m' w = n' N' M v in general
-    //     ->  N' M = I  ->  N = inv(M)'
-    vec3 n = transpose(AiM) * vn;
+    float dMin = inf;
+    vec3 p, n;
+    int surfID;
+    for (int sid = 0; sid < NSURFS; sid++) {
+        // get volume underlying surface
+        int volID = surf[sid].volID;
+        //   transform camPos & ray from world into voxel space
+        vec3 vcp = vol[volID].AiM * (camPos - vol[volID].AO);
+        vec3 vr = vol[volID].AiM * ray;     // DO NOT NORMALIZE vr
+        // find intersection of ray with surface in voxel space
+        float vd;           // for voxel-space distance
+        vec3 vn;            // for voxel-space normal vector
+        gridtracer(volID, surf[sid].threshold, vcp, vr, vd, vn);
+        //   position of intersection in voxel space
+        vec3 vp = vcp + vd * vr;
+        //   distance to intersection in world space
+        // TODO: this can be more efficient, cf. normalization
+        float d = length(vol[volID].AM * vp + vol[volID].AO - camPos);
+        if (d < dMin) {
+            // record new distance
+            dMin = d;
+            //   transform position from voxel into world space
+            p = vol[volID].AM * vp + vol[volID].AO;
+            //   transform normal vector from voxel into world space
+            //     The normal vector (derived from the gradient) is an element of the
+            //   dual space and therefore transforms covariantly. The reason is that
+            //   orthogonality must be preserved:
+            //     n' v = 0, w = M v, m = N n, N such that m' w = 0
+            //     0 = m' w = n' N' M v in general
+            //     ->  N' M = I  ->  N = inv(M)'
+            n = transpose(vol[volID].AiM) * vn;         // NORMALIZE N
+            // record surface ID
+            surfID = sid;
+        }
+    }
 
     // special cases
     // TODO how do we want to deal with inside position
     // through a mirror, darkly?
-    // with the current cubetracing we cannot even detect it this way
-//    if (d == 0) {
-//        // inside -> paint it gray
-//        fragColor = vec4(0.3, 0.3, 0.3, 1.);
-//        return;
-//    }
-    if (vd == inf) {
+    // with the current cubetracing we cannot even detect it via d == 0
+
+    if (dMin == inf) {
         // not found -> background
         fragColor = vec4(background(ray), 1.);
         return;
@@ -400,15 +414,11 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
     drv = drv * step(0., drv) * step(0., dln);
     dln = dln * step(0., dln);
     // illumination: ambient + diffuse + specular
-    vec3 k = ka + kd * dln + ks * pow(drv, alpha);
+    vec3 k = surf[surfID].ka
+            + surf[surfID].kd * dln
+            + surf[surfID].ks * pow(drv, surf[surfID].alpha);
 
-    // prevent color overflow
-    // TODO: this is just a hack
-    // We would have to compute the factor across all materials.
-    vec3 ksum = ka + kd + ks;
-    float factor = 1. / max(max(ksum.r, ksum.g), ksum.b);
-
-    fragColor = vec4(factor * k, 1.);
+    fragColor = vec4(k, 1.);
 }
 
 
