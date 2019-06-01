@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-# volume viewer aka "brain game"
+# voxel viewer aka "brain game"
 # CA 2019-5-31
 
 
@@ -150,7 +150,7 @@ else:
                        + glGetShaderInfoLog(vertexShader).decode('ASCII'))
 
 # create and compile fragment shader
-with open("volview.glsl", 'r') as file:
+with open("voxview.glsl", 'r') as file:
     fragmentShaderSource = file.read()
 fragmentShaderSource = shaderHeader + fragmentShaderSource + shaderFooter
 fragmentShader = glCreateShader(GL_FRAGMENT_SHADER)

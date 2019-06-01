@@ -6,7 +6,10 @@
 #define NSURFS 2
 
 
-// TODO: fix weird rendering artefact, especially visible for single voxel
+// TODO:
+// – fix weird rendering artefact, especially visible for single voxel
+// – sphere-tracing based cube tracer, to show cuboid and spheroid voxels, and
+//   joined voxels
 
 
 // volumes
