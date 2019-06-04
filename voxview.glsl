@@ -2,14 +2,19 @@
 //#define AA
 #define DEBUG
 
-#define NVOLS 2
-#define NSURFS 2
+#define NVOLS 3            // FIXME
+#define NSURFS 3           // FIXME
 
 
 // TODO:
 // – fix weird rendering artefact, especially visible for single voxel
+// - optimization, gridtracing only up to dMin
 // – sphere-tracing based cube tracer, to show cuboid and spheroid voxels, and
 //   joined voxels
+// - volume for coloring
+// - how to deal with NaNs in volumes?
+// – deal with inside positions?
+// - do we want transparency?
 
 
 // volumes
@@ -38,9 +43,13 @@ struct Surface {
 };
 uniform Surface surf[NSURFS];
 
-// direction of light
-const vec3 lightDir = normalize(vec3(-2., 1., 1.));
-
+// direction of lights
+//   Four lights in tetrahedral configuration reach everywhere.
+const vec3 lightDir[4] = vec3[4](
+    vec3(1., 1., 1.),
+    vec3(1., -1., -1.),
+    vec3(-1., 1., 1.),
+    vec3(1., 1., -1.));
 
 // numerical infinity
 const float inf = 1. / 0.;
@@ -54,10 +63,6 @@ const float nan = 0. / 0;
 // returns
 //   vec3:      color
 vec3 background(in vec3 ray) {
-    // light
-    if (dot(lightDir, ray) >= cos(radians(0.5))) {
-        return vec3(1., 1., 1.);
-    }
     // black to green-blue in z-direction
     return (1. + ray.z) / 2. * vec3(0., 0.5, 1.);
 }
@@ -315,7 +320,8 @@ void gridtracer(in int volID, in float threshold, in vec3 start, in vec3 dir,
 
         // 3) Process the line segment.
         vec3 p;
-        if (cubetracer(volID, threshold, pos, posNext, p, n)) {
+        if (cubetracer(volID, threshold, pos, posNext,
+                       p, n)) {
             d = dot((p - start), dir);
             return;
         }
@@ -341,12 +347,13 @@ void gridtracer(in int volID, in float threshold, in vec3 start, in vec3 dir,
 }
 
 // main function
-// out
-//   vec4 fragColor:    color the current fragment (pixel) should be display in
 // in
 //   vec2 fragCoord:    coordinates of the current (pixel)
-//                      values are in [0.5, resolution - 0.5]
-void mainImage(out vec4 fragColor, in vec2 fragCoord) {
+//                      w/o antialiasing values are in [0.5, resolution - 0.5]
+// out
+//   vec4 fragColor:    color the current fragment (pixel) should be shown in
+void mainImage(in vec2 fragCoord,
+               out vec4 fragColor) {
     // translate pixel indices into coordinate system where (0, 0) is
     // the center, and the frame is fit into the range (-1, -1) to (1, 1)
     vec2 coord = (2. * fragCoord - resolution) /
@@ -362,41 +369,38 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
     for (int sid = 0; sid < NSURFS; sid++) {
         // get volume underlying surface
         int volID = surf[sid].volID;
-        //   transform camPos & ray from world into voxel space
+        // transform camPos from world into voxel space
         vec3 vcp = vol[volID].AiM * (camPos - vol[volID].AO);
-        vec3 vr = vol[volID].AiM * ray;     // DO NOT NORMALIZE vr
+        // transform ray from world into voxel space
+        vec3 vr = vol[volID].AiM * ray;
+        vec3 vdir = normalize(vr);      // as a normalized vector
         // find intersection of ray with surface in voxel space
-        float vd;           // for voxel-space distance
-        vec3 vn;            // for voxel-space normal vector
-        gridtracer(volID, surf[sid].threshold, vcp, vr, vd, vn);
-        //   position of intersection in voxel space
-        vec3 vp = vcp + vd * vr;
-        //   distance to intersection in world space
-        // TODO: this can be more efficient, cf. normalization
-        float d = length(vol[volID].AM * vp + vol[volID].AO - camPos);
+        float vd;    // for voxel-space distance
+        vec3 vn;    // for voxel-space normal vector
+        gridtracer(volID, surf[sid].threshold, vcp, vdir,
+                   vd, vn);
+        // world-space distance
+        float d = vd / length(vr);
+        // if new distance is smaller
         if (d < dMin) {
             // record new distance
             dMin = d;
-            //   transform position from voxel into world space
-            p = vol[volID].AM * vp + vol[volID].AO;
-            //   transform normal vector from voxel into world space
-            //     The normal vector (derived from the gradient) is an element of the
-            //   dual space and therefore transforms covariantly. The reason is that
-            //   orthogonality must be preserved:
-            //     n' v = 0, w = M v, m = N n, N such that m' w = 0
-            //     0 = m' w = n' N' M v in general
-            //     ->  N' M = I  ->  N = inv(M)'
-            n = transpose(vol[volID].AiM) * vn;         // NORMALIZE N
+            // position in world space
+            p = camPos + d * ray;
+            // transform normal vector from voxel into world space
+            //   The normal vector (derived from the gradient) is an element of the
+            // dual space and therefore transforms covariantly. The reason is that
+            // orthogonality must be preserved:
+            //   n' v = 0, w = M v, m = N n, N such that m' w = 0
+            //   0 = m' w = n' N' M v in general
+            //   ->  N' M = I  ->  N = inv(M)'
+            n = normalize(transpose(vol[volID].AiM) * vn);
             // record surface ID
             surfID = sid;
         }
     }
 
-    // special cases
-    // TODO how do we want to deal with inside position
-    // through a mirror, darkly?
-    // with the current cubetracing we cannot even detect it via d == 0
-
+    // special case
     if (dMin == inf) {
         // not found -> background
         fragColor = vec4(background(ray), 1.);
@@ -405,21 +409,23 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
 
     // Phong illumination
     //   see https://en.wikipedia.org/wiki/Phong_reflection_model#Description
-    // TODO: multiple lights? – methinks at least two
+    // ambient illumination
+    vec3 k = surf[surfID].ka;
     // normalized vectors
-    vec3 v = normalize(camPos - p);        // direction to the viewer
-    vec3 l = lightDir;                      // direction to the light
-    vec3 r = normalize(reflect(-l, n));     // direction of reflected light
-    // scalar products
-    float drv = dot(r, v);
-    float dln = dot(l, n);
-    // sign constraints
-    drv = drv * step(0., drv) * step(0., dln);
-    dln = dln * step(0., dln);
-    // illumination: ambient + diffuse + specular
-    vec3 k = surf[surfID].ka
-            + surf[surfID].kd * dln
-            + surf[surfID].ks * pow(drv, surf[surfID].alpha);
+    vec3 v = normalize(camPos - p);         // direction to the viewer
+    for (int i = 0; i < lightDir.length; i++) {
+        vec3 l = normalize(lightDir[i]);// direction to light
+        vec3 r = normalize(reflect(-l, n));// direction of reflected light
+        // scalar products
+        float drv = dot(r, v);
+        float dln = dot(l, n);
+        // sign constraints
+        drv = drv * step(0., drv) * step(0., dln);
+        dln = dln * step(0., dln);
+        // + diffuse illumination + specular illumination
+        k += surf[surfID].kd * dln
+           + surf[surfID].ks * pow(drv, surf[surfID].alpha);
+    }
 
     fragColor = vec4(k, 1.);
 }

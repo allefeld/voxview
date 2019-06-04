@@ -2,15 +2,16 @@
 # -*- coding: utf-8 -*-
 
 # voxel viewer aka "brain game"
-# CA 2019-5-31
+# CA 2019-6–1
 
 
+import OpenGL.GL as gl
 import sdl2
-from OpenGL.GL import *
 import numpy as np
+import nibabel as nib
 import time
 import struct
-import nibabel as nib
+import ctypes
 
 
 # The shader must define
@@ -42,23 +43,28 @@ void main() {
         // 4x super-sampling full-scene anti-aliasing
         fragColor = vec4(0., 0., 0., 0.);
         vec4 col;
-        mainImage(col, gl_FragCoord.xy + vec2(0.25, 0.25));
+        mainImage(gl_FragCoord.xy + vec2(0.25, 0.25),
+                  col);
         fragColor += col;
-        mainImage(col, gl_FragCoord.xy + vec2(-0.25, 0.25));
+        mainImage(gl_FragCoord.xy + vec2(-0.25, 0.25),
+                  vol);
         fragColor += col;
-        mainImage(col, gl_FragCoord.xy + vec2(0.25, -0.25));
+        mainImage(gl_FragCoord.xy + vec2(0.25, -0.25),
+                  col);
         fragColor += col;
-        mainImage(col, gl_FragCoord.xy + vec2(-0.25, -0.25));
+        mainImage(gl_FragCoord.xy + vec2(-0.25, -0.25),
+                  col);
         fragColor += col;
         fragColor = fragColor / 4.0;
     #else
-        mainImage(fragColor, gl_FragCoord.xy);
+        mainImage(gl_FragCoord.xy,
+                  fragColor);
     #endif
     // error-checking
     // if there are out-of-range color components, blink red/green
     #ifdef DEBUG
     if (clamp(fragColor, 0., 1.) != fragColor) {
-        error = vec4(1., 0., 0., 1.);
+        error = vec4(0., 1., 0., 1.);
     }
     if (error != vec4(0., 0., 0., 0.)) {
         if (fract(time * 2.) < 0.5) {
@@ -111,8 +117,8 @@ context = sdl2.SDL_GL_CreateContext(window)
 # based on http://www.hivestream.de/python-3-and-opengl-woes.html
 
 # create and activate Vertex Array Object (VAO)
-VAO = glGenVertexArrays(1)
-glBindVertexArray(VAO)
+VAO = gl.glGenVertexArrays(1)
+gl.glBindVertexArray(VAO)
 
 # define vertex data describing a quad
 #   The quad is coded as two triangles with two shared vertices,
@@ -127,11 +133,11 @@ quad = np.array([-1, -1,
 
 # create a buffer object intended for the vertex data,
 # therefore called vertex buffer object (VBO)
-VBO = glGenBuffers(1)
+VBO = gl.glGenBuffers(1)
 # initialize the VBO to be used for vertex data
-glBindBuffer(GL_ARRAY_BUFFER, VBO)
+gl.glBindBuffer(gl.GL_ARRAY_BUFFER, VBO)
 # create mutable storage for the VBO and copy data into it
-glBufferData(GL_ARRAY_BUFFER, quad, GL_STATIC_DRAW)
+gl.glBufferData(gl.GL_ARRAY_BUFFER, quad, gl.GL_STATIC_DRAW)
 
 # create and compile vertex shader
 #   This vertex shader simply puts vertices at our 2D positions.
@@ -140,131 +146,148 @@ vertexShaderSource = """#version 100
     void main() {
         gl_Position = vec4(position, 0., 1.);
     }"""
-vertexShader = glCreateShader(GL_VERTEX_SHADER)
-glShaderSource(vertexShader, vertexShaderSource)
-glCompileShader(vertexShader)
-if glGetShaderiv(vertexShader, GL_COMPILE_STATUS) == GL_TRUE:
+vertexShader = gl.glCreateShader(gl.GL_VERTEX_SHADER)
+gl.glShaderSource(vertexShader, vertexShaderSource)
+gl.glCompileShader(vertexShader)
+if gl.glGetShaderiv(vertexShader, gl.GL_COMPILE_STATUS) == gl.GL_TRUE:
     print("*** OpenGL vertex shader compiled.")
 else:
     raise RuntimeError("OpenGL vertex shader could not be compiled\n"
-                       + glGetShaderInfoLog(vertexShader).decode('ASCII'))
+                       + gl.glGetShaderInfoLog(vertexShader).decode('ASCII'))
 
 # create and compile fragment shader
 with open("voxview.glsl", 'r') as file:
     fragmentShaderSource = file.read()
 fragmentShaderSource = shaderHeader + fragmentShaderSource + shaderFooter
-fragmentShader = glCreateShader(GL_FRAGMENT_SHADER)
-glShaderSource(fragmentShader, fragmentShaderSource)
-glCompileShader(fragmentShader)
-if glGetShaderiv(fragmentShader, GL_COMPILE_STATUS) == GL_TRUE:
+fragmentShader = gl.glCreateShader(gl.GL_FRAGMENT_SHADER)
+gl.glShaderSource(fragmentShader, fragmentShaderSource)
+gl.glCompileShader(fragmentShader)
+if gl.glGetShaderiv(fragmentShader, gl.GL_COMPILE_STATUS) == gl.GL_TRUE:
     print("*** OpenGL fragment shader compiled.")
 else:
     raise RuntimeError("OpenGL fragment shader could not be compiled\n"
-                       + glGetShaderInfoLog(fragmentShader).decode('ASCII'))
+                       + gl.glGetShaderInfoLog(fragmentShader).decode('ASCII'))
 
 # create program object and attach shaders
-program = glCreateProgram()
-glAttachShader(program, vertexShader)
-glAttachShader(program, fragmentShader)
+program = gl.glCreateProgram()
+gl.glAttachShader(program, vertexShader)
+gl.glAttachShader(program, fragmentShader)
 # make name of fragment shader color output explicit
-glBindFragDataLocation(program, 0, b"fragColor")
+gl.glBindFragDataLocation(program, 0, b"fragColor")
 # link the program
-glLinkProgram(program)
-if glGetProgramiv(program, GL_LINK_STATUS) == GL_TRUE:
+gl.glLinkProgram(program)
+if gl.glGetProgramiv(program, gl.GL_LINK_STATUS) == gl.GL_TRUE:
     print("*** OpenGL program linked.")
 else:
     raise RuntimeError("OpenGL program could not be linked\n"
-                       + glGetProgramInfoLog(program).decode('ASCII'))
+                       + gl.glGetProgramInfoLog(program).decode('ASCII'))
 # validate the program
-glValidateProgram(program)
+gl.glValidateProgram(program)
 # activate the program
-glUseProgram(program)
+gl.glUseProgram(program)
 
 # specify the layout of our vertex data
 #   get a handle for the input variable position in our shader program
-posAttrib = glGetAttribLocation(program, b"position")
+posAttrib = gl.glGetAttribLocation(program, b"position")
 #   activate this input
-glEnableVertexAttribArray(posAttrib)
+gl.glEnableVertexAttribArray(posAttrib)
 #   format of the vertex data
 # Here it is defined as consisting of pairs of GL_FLOAT type items with no
 # other items between them (stride parameter 0) starting at offset 0
 # in the buffer. This function refers to the currently bound GL_ARRAY_BUFFER,
 # which is our vbo with the corner coordinates of the quad.
-glVertexAttribPointer(posAttrib, 2, GL_FLOAT, False, 0, ctypes.c_voidp(0))
+gl.glVertexAttribPointer(posAttrib, 2, gl.GL_FLOAT, False, 0, gl.GLvoidp(0))
 
 
 # ------------------------------------------------------------------------------
 
 
 filenames = ["mni_icbm152_nlin_asym_09c/mni_icbm152_gm_tal_nlin_asym_09c.nii",
-             "mni_icbm152_nlin_asym_09c/mni_icbm152_wm_tal_nlin_asym_09c.nii"]
+             "mni_icbm152_nlin_asym_09c/mni_icbm152_wm_tal_nlin_asym_09c.nii",
+             "sLPcomb-radek-X-C-PxC.nii"]
+thresholds = [0.3, 0.3, 0.001]
 
 for volID in range(len(filenames)):
     # load data
     img = nib.load(filenames[volID])
     # volume data
     data = img.get_fdata(dtype=np.float16)
+    data[np.isnan(data)] = 0        # TODO
     # affine transformation
     #   rotation & scaling matrix (voxel -> world)
     AM = img.affine[:3, :3]
-    # translation (voxel -> world), position of voxel [0, 0, 0]
+    # translation (voxel -> world), world position of voxel [0, 0, 0]
     AO = img.affine[:3, 3]
-    if volID == 1:
-        AO[0] += 100;
+    # AO[0] += volID * 100 - 100
+    # if volID == 1:
+    #     AO[0] += 100
     #   inverse rotation & scaling (world -> voxel)
     AiM = np.linalg.inv(AM)
 
     # pass volume data as texture -> uniform sampler3D
-    texture = glGenTextures(1)
-    glUniform1i(glGetUniformLocation(program, "vol[%d].data" % volID),
-                volID)
-    glActiveTexture(GL_TEXTURE0 + volID)
-    glBindTexture(GL_TEXTURE_3D, texture)
-    glTexImage3D(GL_TEXTURE_3D, 0, GL_R16F, *data.shape,
-                 0, GL_RED, GL_FLOAT, data.flatten('F'))
+    texture = gl.glGenTextures(1)
+    gl.glUniform1i(
+        gl.glGetUniformLocation(program, "vol[%d].data" % volID),
+        volID)
+    gl.glActiveTexture(gl.GL_TEXTURE0 + volID)
+    gl.glBindTexture(gl.GL_TEXTURE_3D, texture)
+    gl.glTexImage3D(gl.GL_TEXTURE_3D, 0, gl.GL_R16F, *data.shape,
+                    0, gl.GL_RED, gl.GL_FLOAT, data.flatten('F'))
     # should the following two be necessary when using texelFetch?!
-    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAX_LEVEL, 0)
-    glClampColor(GL_CLAMP_READ_COLOR, GL_FALSE)
-    glEnable(GL_TEXTURE_3D)
+    gl.glTexParameteri(gl.GL_TEXTURE_3D, gl.GL_TEXTURE_MAX_LEVEL, 0)
+    gl.glClampColor(gl.GL_CLAMP_READ_COLOR, gl.GL_FALSE)
+    gl.glEnable(gl.GL_TEXTURE_3D)
 
     # pass affine transformation
-    glUniformMatrix3fv(glGetUniformLocation(program, "vol[%d].AM" % volID),
-                       1, GL_FALSE, *AM.flatten('F'))
-    # TODO: struct.pack necessary?
-    glUniform3f(glGetUniformLocation(program, "vol[%d].AO" % volID), *AO)
-    glUniformMatrix3fv(glGetUniformLocation(program, "vol[%d].AiM" % volID),
-                       1, GL_FALSE, struct.pack('f' * 9, *AiM.flatten('F')))
+    gl.glUniformMatrix3fv(
+        gl.glGetUniformLocation(program, "vol[%d].AM" % volID),
+        1, gl.GL_FALSE, *AM.flatten('F'))
+    gl.glUniform3f(
+        gl.glGetUniformLocation(program, "vol[%d].AO" % volID),
+        *AO)
+    gl.glUniformMatrix3fv(
+        gl.glGetUniformLocation(program, "vol[%d].AiM" % volID),
+        1, gl.GL_FALSE, struct.pack('f' * 9, *AiM.flatten('F')))
+    # Why is struct.pack necessary for glUniformMatrix3fv,
+    # but not for glUniform3f?
 
-for surfID in range(2):
+for surfID in range(len(filenames)):
     # define surface
     volID = surfID
-    threshold = 0.15
-    if surfID == 1:
-        ka = np.array([0.1567, 0.1063, 0.0130])
-        kd = np.array([0.3712, 0.2705, 0.0541])
-        ks = np.array([0.4720, 0.4477, 0.3843])
-        alpha = 27.89
-    else:
-        ka = np.array([0.02, 0.02, 0.02])
-        kd = np.array([0.01, 0.01, 0.01])
-        ks = np.array([0.4, 0.4, 0.4])
-        alpha = 10.
+    threshold = thresholds[volID]
+    # http://devernay.free.fr/cours/opengl/materials.html
+    if surfID == 0:         # gray
+        color = [0.1, 0.1, 0.1]
+    elif surfID == 1:       # white
+        color = [1., 1., 1.]
+    elif surfID == 2:       # red
+        color = [1., 0., 0.]
+    ka = np.array(color) * 0.3
+    kd = np.array(color) * 0.3
+    ks = np.array([1., 1., 1.]) * 0.1
+    alpha = 10.
 
     # pass volume ID
-    glUniform1i(glGetUniformLocation(program, "surf[%d].volID" % surfID),
-                volID)
+    gl.glUniform1i(
+        gl.glGetUniformLocation(program, "surf[%d].volID" % surfID),
+        volID)
     # pass threshold
-    glUniform1f(glGetUniformLocation(program, "surf[%d].threshold" % surfID),
-                threshold)
+    gl.glUniform1f(
+        gl.glGetUniformLocation(program, "surf[%d].threshold" % surfID),
+        threshold)
     # pass Phong coefficients
-    glUniform3f(glGetUniformLocation(program, "surf[%d].ka" % surfID),
-                *ka)
-    glUniform3f(glGetUniformLocation(program, "surf[%d].kd" % surfID),
-                *kd)
-    glUniform3f(glGetUniformLocation(program, "surf[%d].ks" % surfID),
-                *ks)
-    glUniform1f(glGetUniformLocation(program, "surf[%d].alpha" % surfID),
-                alpha)
+    gl.glUniform3f(
+        gl.glGetUniformLocation(program, "surf[%d].ka" % surfID),
+        *ka)
+    gl.glUniform3f(
+        gl.glGetUniformLocation(program, "surf[%d].kd" % surfID),
+        *kd)
+    gl.glUniform3f(
+        gl.glGetUniformLocation(program, "surf[%d].ks" % surfID),
+        *ks)
+    gl.glUniform1f(
+        gl.glGetUniformLocation(program, "surf[%d].alpha" % surfID),
+        alpha)
 
 
 # ------------------------------------------------------------------------------
@@ -285,13 +308,13 @@ def deadzone(x, dead):
 
 
 def display():
-    """redraw window callbacks"""
+    """redraw window"""
 
     # *** update window
     w = ctypes.c_int()
     h = ctypes.c_int()
     sdl2.SDL_GetWindowSize(window, w, h)
-    glViewport(0, 0, w, h)
+    gl.glViewport(0, 0, w, h)
 
     # *** update time & input
     # timing
@@ -353,32 +376,42 @@ def display():
 
     # *** update uniforms
     # update generic uniforms
-    glUniform2f(glGetUniformLocation(program, "resolution"),
-                float(w.value), float(h.value))
-    glUniform1f(glGetUniformLocation(program, "time"), t)
+    gl.glUniform2f(
+        gl.glGetUniformLocation(program, "resolution"),
+        float(w.value), float(h.value))
+    gl.glUniform1f(
+        gl.glGetUniformLocation(program, "time"),
+        t)
     # update camera position uniform
-    glUniform3f(glGetUniformLocation(program, "camPos"), *camPos)
+    gl.glUniform3f(
+        gl.glGetUniformLocation(program, "camPos"),
+        *camPos)
     # update camera matrix uniform
     cm = np.column_stack((horizontal, vertical, center))
-    glUniformMatrix3fv(glGetUniformLocation(program, "camMatrix"), 1, GL_FALSE,
-                       struct.pack('f'*9, *cm.flatten('F')))
+    gl.glUniformMatrix3fv(
+        gl.glGetUniformLocation(program, "camMatrix"), 1, gl.GL_FALSE,
+        struct.pack('f'*9, *cm.flatten('F')))
 
     # use vertex buffer data to draw
     #   The first four values of the vertex sequence are interpreted as
     # specifying a triangle strip (see above).
-    glClearColor(1.0, 0.5, 0.0, 1.0)
-    glClear(GL_COLOR_BUFFER_BIT)
-    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4)
+    gl.glClearColor(1.0, 0.5, 0.0, 1.0)
+    gl.glClear(gl.GL_COLOR_BUFFER_BIT)
+    gl.glDrawArrays(gl.GL_TRIANGLE_STRIP, 0, 4)
 
     # time display updates
     title = "shader:  %d - %.2f - %.2f - %.2f" % (frame, t, frame / t, 1 / td)
     sdl2.SDL_SetWindowTitle(window, title.encode('UTF-8'))
 
+    # swap buffers (glFlush + glXSwapBuffers?)
+    # possibly use glFinish() to make timing tighter – doesn't seem to hurt much
+    gl.glFinish()
+    sdl2.SDL_GL_SwapWindow(window)
+
 
 # ------------------------------------------------------------------------------
 
 
-# toggle between windowed and fullscreen mode
 def toggleFullscreen():
     """toggle between windowed and fullscreen mode"""
     if sdl2.SDL_GetWindowFlags(window) & sdl2.SDL_WINDOW_FULLSCREEN_DESKTOP:
@@ -388,28 +421,13 @@ def toggleFullscreen():
             window, sdl2.SDL_WINDOW_FULLSCREEN_DESKTOP)
 
 
-# create dictionary that maps event.window.event to names
-windowEventNames = [
-    'SDL_WINDOWEVENT_SHOWN', 'SDL_WINDOWEVENT_HIDDEN',
-    'SDL_WINDOWEVENT_EXPOSED', 'SDL_WINDOWEVENT_MOVED',
-    'SDL_WINDOWEVENT_RESIZED', 'SDL_WINDOWEVENT_SIZE_CHANGED',
-    'SDL_WINDOWEVENT_MINIMIZED', 'SDL_WINDOWEVENT_MAXIMIZED',
-    'SDL_WINDOWEVENT_RESTORED', 'SDL_WINDOWEVENT_ENTER',
-    'SDL_WINDOWEVENT_LEAVE', 'SDL_WINDOWEVENT_FOCUS_GAINED',
-    'SDL_WINDOWEVENT_FOCUS_LOST', 'SDL_WINDOWEVENT_CLOSE',
-    'SDL_WINDOWEVENT_TAKE_FOCUS', 'SDL_WINDOWEVENT_HIT_TEST']
-windowEventName = {}
-for e in windowEventNames:
-    windowEventName[eval('sdl2.' + e)] = e
-
-
-# TODO: we want rendering to be paused when the window is invisible
-
-
 # event loop
+# TODO: we want rendering to be paused when the window is invisible
+# also, the current event loop seems to knock out part of KDE
 event = sdl2.SDL_Event()
 running = True
 while running:
+    # process keyboard and window events
     while sdl2.SDL_PollEvent(ctypes.byref(event)) != 0:
         if event.type == sdl2.SDL_QUIT:
             running = False
@@ -418,47 +436,19 @@ while running:
                 running = False
             elif event.key.keysym.sym == sdl2.SDLK_f:
                 toggleFullscreen()
-        # elif event.type == sdl2.SDL_WINDOWEVENT:
-        #     print(windowEventName[event.window.event],
-        #           event.window.data1, event.window.data2)
-
+    # render frame
     display()
-
-    # swap buffers (glFlush + glXSwapBuffers?)
-    # possibly use glFinish() to make timing tighter – doesn't seem to hurt much
-    sdl2.SDL_GL_SwapWindow(window)
-
-    sdl2.SDL_Delay(10)
+    # give the CPU some rest?
+    # sdl2.SDL_Delay(10)
 
 
 # cleanup
-glDisableVertexAttribArray(posAttrib)
-glDeleteProgram(program)
-glDeleteShader(fragmentShader)
-glDeleteShader(vertexShader)
-glDeleteBuffers(1, [VBO])
-glDeleteVertexArrays(1, [VAO])
+gl.glDisableVertexAttribArray(posAttrib)
+gl.glDeleteProgram(program)
+gl.glDeleteShader(fragmentShader)
+gl.glDeleteShader(vertexShader)
+gl.glDeleteBuffers(1, [VBO])
+gl.glDeleteVertexArrays(1, [VAO])
 sdl2.SDL_GL_DeleteContext(context)
 sdl2.SDL_DestroyWindow(window)
 sdl2.SDL_Quit()
-
-
-# eventNames = ['SDL_FIRSTEVENT', 'SDL_QUIT', 'SDL_APP_TERMINATING',
-#               'SDL_APP_LOWMEMORY', 'SDL_APP_WILLENTERBACKGROUND',
-#               'SDL_APP_DIDENTERBACKGROUND','SDL_APP_WILLENTERFOREGROUND',
-#               'SDL_APP_DIDENTERFOREGROUND', 'SDL_WINDOWEVENT',
-#               'SDL_SYSWMEVENT', 'SDL_KEYDOWN', 'SDL_KEYUP',
-#               'SDL_TEXTEDITING', 'SDL_TEXTINPUT', 'SDL_KEYMAPCHANGED',
-#               'SDL_MOUSEMOTION', 'SDL_MOUSEBUTTONDOWN', 'SDL_MOUSEBUTTONUP',
-#               'SDL_MOUSEWHEEL', 'SDL_JOYAXISMOTION', 'SDL_JOYBALLMOTION',
-#               'SDL_JOYHATMOTION', 'SDL_JOYBUTTONDOWN', 'SDL_JOYBUTTONUP',
-#               'SDL_JOYDEVICEADDED', 'SDL_JOYDEVICEREMOVED',
-#               'SDL_CONTROLLERAXISMOTION', 'SDL_CONTROLLERBUTTONDOWN',
-#               'SDL_CONTROLLERBUTTONUP', 'SDL_CONTROLLERDEVICEADDED',
-#               'SDL_CONTROLLERDEVICEREMOVED', 'SDL_CONTROLLERDEVICEREMAPPED',
-#               'SDL_FINGERDOWN', 'SDL_FINGERUP', 'SDL_FINGERMOTION',
-#               'SDL_DOLLARGESTURE', 'SDL_DOLLARRECORD', 'SDL_MULTIGESTURE',
-#               'SDL_CLIPBOARDUPDATE', 'SDL_DROPFILE', 'SDL_DROPTEXT',
-#               'SDL_DROPBEGIN', 'SDL_DROPCOMPLETE', 'SDL_AUDIODEVICEADDED',
-#               'SDL_AUDIODEVICEREMOVED', 'SDL_RENDER_TARGETS_RESET',
-#               'SDL_RENDER_DEVICE_RESET', 'SDL_USEREVENT', 'SDL_LASTEVENT']
