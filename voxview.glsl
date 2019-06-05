@@ -7,7 +7,6 @@
 
 
 // TODO:
-// – fix weird rendering artefact, especially visible for single voxel
 // - optimization, gridtracing only up to dMin
 // – sphere-tracing based cube tracer, to show cuboid and spheroid voxels, and
 //   joined voxels
@@ -42,6 +41,7 @@ struct Surface {
     float alpha;    // shininess
 };
 uniform Surface surf[NSURFS];
+
 
 // direction of lights
 //   Four lights in tetrahedral configuration reach everywhere.
@@ -84,16 +84,15 @@ vec3 background(in vec3 ray) {
 //   bool:              whether an intersection point was found
 bool cubetracer(in int volID, in float threshold, in vec3 pos, in vec3 posNext,
                   out vec3 p, out vec3 n) {
-    int i, j, k;
-    float v[2][2][2];
     // the lower vertex of the grid cube the line segment crosses
     ivec3 lower = ivec3(floor((pos + posNext) / 2.));
     // extract data from surrounding vertices
+    float v[2][2][2];
     float vMax = -inf;
     float vMin = inf;
-    for (i = 0; i < 2; i++) {
-        for (j = 0; j < 2; j++) {
-            for (k = 0; k < 2; k++) {
+    for (int i = 0; i < 2; i++) {
+        for (int j = 0; j < 2; j++) {
+            for (int k = 0; k < 2; k++) {
                 v[i][j][k] = texelFetch(vol[volID].data,
                     lower + ivec3(i, j, k), 0).r;
                 if (v[i][j][k] > vMax) { vMax = v[i][j][k]; }
@@ -101,14 +100,13 @@ bool cubetracer(in int volID, in float threshold, in vec3 pos, in vec3 posNext,
             }
         }
     }
-    // quick check whether there can be a threshold crossing
-    if ((vMax < threshold) || (vMin > threshold)) {
+    // quick check whether there can be a threshold crossing at all
+    if (vMax < threshold) {
         return false;
     }
-    // -> determine threshold crossing
-    // coefficients for line through grid cube, p = a + b t
-    vec3 b = posNext - pos;
-    vec3 a = pos - lower;
+    if (vMin > threshold) {
+        return false;
+    }
     // coefficients of trilinear interpolation within grid cube
     float c     = + v[0][0][0];
     float cx    = - v[0][0][0] + v[1][0][0];
@@ -119,7 +117,10 @@ bool cubetracer(in int volID, in float threshold, in vec3 pos, in vec3 posNext,
     float cyz   = + v[0][0][0] - v[0][0][1] - v[0][1][0] + v[0][1][1];
     float cxyz  = - v[0][0][0] + v[0][0][1] + v[0][1][0] - v[0][1][1]
                   + v[1][0][0] - v[1][0][1] - v[1][1][0] + v[1][1][1];
-    // & along line through grid cube
+    // coefficients for line through grid cube, p = a + b t, t in [0, 1]
+    vec3 b = posNext - pos;
+    vec3 a = pos - lower;
+    // of trilinear interpolation along line through grid cube
     // f(t) = d0 + d1 t + d2 t² + d3 t³
     float d0 = c + cx * a.x + cy * a.y + cz * a.z
              + cxy * a.x * a.y + cxz * a.x * a.z + cyz * a.y * a.z
@@ -132,23 +133,24 @@ bool cubetracer(in int volID, in float threshold, in vec3 pos, in vec3 posNext,
     float d2 = cxy * b.x * b.y + cxz * b.x * b.z + cyz * b.y * b.z
              + cxyz * (a.x * b.y * b.z + a.y * b.x * b.z + b.x * b.y * a.z);
     float d3 = cxyz * b.x * b.y * b.z;
-
     // search for threshold crossing along the line segment
-    // method using extrema, adapted from
+    // method using extrema, adapted from "Algorithm 3" in
     //   Marmitt et al. Fast and accurate ray-voxel intersection techniques for
     // iso-surface ray tracing. In Vision, Modeling, and Visualization 2004.
     // http://hodad.bioen.utah.edu/~wald/Publications/2004/iso/IsoIsec_VMV2004.pdf
-    // "Algorithm 3" -----------------------------------------------------------
+    //
+    // initial segment is [0, 1]
     float t0 = 0.;
     float f0 = d0;                  // d0 + (d1 + (d2 + d3 * t0) * t0) * t0;
     float t1 = 1.;
     float f1 = d0 + d1 + d2 + d3;   // d0 + (d1 + (d2 + d3 * t1) * t1) * t1;
     // Find extrema by looking at f'(t) = d1 + 2 d2 t + 3 d3 t²
-    // solutions are t = (-d2 ± sqrt(d2² - 3 d1 d3)) / (3 d3)
+    // solutions are t = -d2 / (3 d3) ± sqrt(d2² - 3 d1 d3) / (3 d3)
     if ((d2 * d2 > 3 * d1 * d3) && (d3 != 0)) {
-        // f' has real (and finite) roots
+        // f' has two real (and finite) roots
+        float pm = abs(sqrt(d2 * d2 - 3 * d1 * d3) / (3 * d3));
         // tm = smaller root of f'
-        float tm = (-d2 - sign(d3) * sqrt(d2 * d2 - 3 * d1 * d3)) / (3 * d3);
+        float tm = -d2 / (3 * d3) - pm;
         if ((t0 < tm) && (tm < t1)) {
             // if tm splits the interval
             // examine [t0 tm] for a threshold crossing
@@ -157,27 +159,27 @@ bool cubetracer(in int volID, in float threshold, in vec3 pos, in vec3 posNext,
                 // no threshold crossing -> advance to [tm t1]
                 t0 = tm;
                 f0 = fm;
-
-                // tp = second root of f'
-                float tp = (-d2 + sign(d3) * sqrt(d2 * d2 - 3 * d1 * d3)) / (3 * d3);
-                if ((t0 < tp) && (tp < t1)) {
-                    // if tp splits the interval
-                    // examine [t0 tp] for a threshold crossing
-                    float fp = d0 + (d1 + (d2 + d3 * tp) * tp) * tp;
-                    if (sign(fp - threshold) == sign(f0 - threshold)) {
-                        // no threshold crossing -> advance to [tp t1]
-                        t0 = tp;
-                        f0 = fp;
-                    } else {
-                        // threshold crossing -> look for it in [t0, tp]
-                        t1 = tp;
-                        f1 = fp;
-                    }
-                }
+                // [I'm too fucking "smart" for my own good.]
             } else {
                 // threshold crossing -> calculate it in [t0 tm]
                 t1 = tm;
                 f1 = fm;
+            }
+        }
+        // tp = second root of f'
+        float tp = -d2 / (3 * d3) + pm;
+        if ((t0 < tp) && (tp < t1)) {
+            // if tp splits the interval
+            // examine [t0 tp] for a threshold crossing
+            float fp = d0 + (d1 + (d2 + d3 * tp) * tp) * tp;
+            if (sign(fp - threshold) == sign(f0 - threshold)) {
+                // no threshold crossing -> advance to [tp t1]
+                t0 = tp;
+                f0 = fp;
+            } else {
+                // threshold crossing -> look for it in [t0, tp]
+                t1 = tp;
+                f1 = fp;
             }
         }
     }
@@ -187,11 +189,10 @@ bool cubetracer(in int volID, in float threshold, in vec3 pos, in vec3 posNext,
     }
     // now we can be sure that the segment [t0 t1] contains a threshold crossing
     // calculate it via repeated linear interpolation
-    const int N = 1;
     // approximate threshold
     // f = f0 + (f1 - f0) * (t - t0) / (t1 - t0)  =  threshold
     float t = t0 + (t1 - t0) * (threshold - f0) / (f1 - f0);
-    for (int i = 1; i <= N; i++) {
+    for (int i = 1; i <= 2; i++) {
         float f = d0 + (d1 + (d2 + d3 * t) * t) * t;
         if (sign(f - threshold) == sign(f0 - threshold)) {
             // approximation too low -> look for it in [t, t1]
@@ -221,7 +222,6 @@ bool cubetracer(in int volID, in float threshold, in vec3 pos, in vec3 posNext,
     }
     p += lower;
     return true;
-    // end of "Algorithm 3" ----------------------------------------------------
 }
 
 
@@ -294,6 +294,7 @@ void gridtracer(in int volID, in float threshold, in vec3 start, in vec3 dir,
     int l = 0;
     while (all(greaterThanEqual(pos, vec3(-1., -1, -1.))
                     && lessThanEqual(pos, shape))) {
+        // FIXME this allows the last line segment to be beyond the extended grid
         // 2) Get the next point.
         vec3 posNext;
         // Skip a little bit ahead, to avoid getting stuck.

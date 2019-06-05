@@ -47,7 +47,7 @@ void main() {
                   col);
         fragColor += col;
         mainImage(gl_FragCoord.xy + vec2(-0.25, 0.25),
-                  vol);
+                  col);
         fragColor += col;
         mainImage(gl_FragCoord.xy + vec2(0.25, -0.25),
                   col);
@@ -63,15 +63,17 @@ void main() {
     // error-checking
     // if there are out-of-range color components, blink red/green
     #ifdef DEBUG
-    if (clamp(fragColor, 0., 1.) != fragColor) {
-        error = vec4(0., 1., 0., 1.);
-    }
     if (error != vec4(0., 0., 0., 0.)) {
         if (fract(time * 2.) < 0.5) {
             fragColor = error;
         } else {
             fragColor = error * error.a;
         }
+        return;
+    }
+    if (clamp(fragColor, 0., 1.) != fragColor) {
+        fragColor = vec4(1., 1., 1., 1.);
+        return;
     }
     #endif
     // conversion from linear to sRGB ("gamma correction")
@@ -205,7 +207,7 @@ gl.glVertexAttribPointer(posAttrib, 2, gl.GL_FLOAT, False, 0, gl.GLvoidp(0))
 filenames = ["mni_icbm152_nlin_asym_09c/mni_icbm152_gm_tal_nlin_asym_09c.nii",
              "mni_icbm152_nlin_asym_09c/mni_icbm152_wm_tal_nlin_asym_09c.nii",
              "sLPcomb-radek-X-C-PxC.nii"]
-thresholds = [0.3, 0.3, 0.001]
+thresholds = [0.5, 0.5, 0.005]
 
 for volID in range(len(filenames)):
     # load data
@@ -219,9 +221,7 @@ for volID in range(len(filenames)):
     # translation (voxel -> world), world position of voxel [0, 0, 0]
     AO = img.affine[:3, 3]
     # AO[0] += volID * 100 - 100
-    # if volID == 1:
-    #     AO[0] += 100
-    #   inverse rotation & scaling (world -> voxel)
+    # inverse rotation & scaling (world -> voxel)
     AiM = np.linalg.inv(AM)
 
     # pass volume data as texture -> uniform sampler3D
@@ -297,7 +297,6 @@ for surfID in range(len(filenames)):
 startTime = time.time()
 lastTime = float('nan')
 frame = 0
-# camPos = np.array([-vol.shape[0], vol.shape[1] / 2, vol.shape[2] / 2])
 camPos = np.array([0., 200., 0.])
 camTheta = np.pi/2
 camPhi = 0
@@ -368,7 +367,7 @@ def display():
         camPos += (deadzone(ls[0], 0.25) * horizontal
                    - deadzone(ls[1], 0.25) * center
                    + du * vertical
-                   - dd * vertical) * td * 50
+                   - dd * vertical) * td * 20
     # camera field of view -> zoom
     fovf = np.tan(np.radians(30 * (1 - rt)))
     horizontal *= fovf
