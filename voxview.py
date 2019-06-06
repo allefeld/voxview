@@ -207,7 +207,7 @@ gl.glVertexAttribPointer(posAttrib, 2, gl.GL_FLOAT, False, 0, gl.GLvoidp(0))
 filenames = ["mni_icbm152_nlin_asym_09c/mni_icbm152_gm_tal_nlin_asym_09c.nii",
              "mni_icbm152_nlin_asym_09c/mni_icbm152_wm_tal_nlin_asym_09c.nii",
              "sLPcomb-radek-X-C-PxC.nii"]
-thresholds = [0.5, 0.5, 0.005]
+thresholds = [0.5, 0.5, 0.007]
 
 for volID in range(len(filenames)):
     # load data
@@ -220,7 +220,7 @@ for volID in range(len(filenames)):
     AM = img.affine[:3, :3]
     # translation (voxel -> world), world position of voxel [0, 0, 0]
     AO = img.affine[:3, 3]
-    # AO[0] += volID * 100 - 100
+    AO[0] += volID * 100 - 100
     # inverse rotation & scaling (world -> voxel)
     AiM = np.linalg.inv(AM)
 
