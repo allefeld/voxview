@@ -10,9 +10,14 @@
 // - optimization, gridtracing only up to dMin
 // – sphere-tracing based cube tracer, to show cuboid and spheroid voxels, and
 //   joined voxels
-// - volume for coloring
+// - enable taking the surface color from another volume
 // - how to deal with NaNs in volumes?
-// – deal with inside positions?
+//   treat like 0, or use them to create open surfaces?
+//   Section 2.3.4.1 of the OpenGL 4.5 compatibility spec:
+//   "Implementations are permitted, but not required, to support Infs and NaNs
+//   in their floating-point computations."
+// – how to deal with inside positions? maybe indicate being inside by some
+//   sort of colored shade over the scene
 // - do we want transparency?
 
 
