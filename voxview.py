@@ -128,10 +128,7 @@ gl.glBindVertexArray(VAO)
 #   3-4
 #   |\|
 #   1-2
-quad = np.array([-1, -1,
-                 1, -1,
-                 -1, 1,
-                 1, 1], dtype=np.float32)
+quad = np.array([-1, -1, 1, -1, -1, 1, 1, 1], dtype=np.float32)
 
 # create a buffer object intended for the vertex data,
 # therefore called vertex buffer object (VBO)

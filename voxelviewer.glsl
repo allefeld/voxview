@@ -1,9 +1,15 @@
-#define GAMMA
-//#define AA
-#define DEBUG
+#version 430 core
+// for debugging, see main()
+vec4 error = vec4(0., 0., 0., 0.);
 
-#define NVOLS 3            // FIXME
-#define NSURFS 3           // FIXME
+#define NV 0                // 1 replaced by len(self.volumes)
+#define NS 1                // 1 replaced by len(self.surfaces)
+
+uniform vec2  resolution;   // viewport resolution (in pixels)
+uniform float time;         // shader playback time (in seconds)
+uniform vec3  camPos;       // camera position
+uniform mat3  camMatrix;    // camera matrix
+
 
 // volumes
 struct Volume {
@@ -14,7 +20,7 @@ struct Volume {
     vec3 AO;        // offset voxel -> world
     mat3 AiM;       // matrix world -> voxel
 };
-uniform Volume vol[NVOLS];
+uniform Volume vol[NV];
 
 
 // surfaces
@@ -29,7 +35,7 @@ struct Surface {
     vec3 ks;        // specular
     float alpha;    // shininess
 };
-uniform Surface surf[NSURFS];
+uniform Surface surf[NS];
 
 
 // direction of lights
@@ -40,6 +46,8 @@ const vec3 lightDir[4] = vec3[4](
     vec3(-1., 1., 1.),
     vec3(1., 1., -1.));
 
+
+// utility constants  TODO: can this be relied upon?
 // numerical infinity
 const float inf = 1. / 0.;
 // numerical not a number
@@ -278,7 +286,6 @@ void gridtracer(in int volID, in float threshold, in vec3 start, in vec3 dir,
             return;
         }
     }
-
     // produce new points sequentially
     int l = 0;
     while (all(greaterThanEqual(pos, vec3(-1., -1, -1.))
@@ -307,7 +314,6 @@ void gridtracer(in int volID, in float threshold, in vec3 start, in vec3 dir,
             distMin = dist;
             posNext = p;
         }
-
         // 3) Process the line segment.
         vec3 p;
         if (cubetracer(volID, threshold, pos, posNext,
@@ -315,12 +321,10 @@ void gridtracer(in int volID, in float threshold, in vec3 start, in vec3 dir,
             d = dot((p - start), dir);
             return;
         }
-
         // The next point becomes the new start point.
         pos = posNext;
-
         // just in case, prevent an infinite loop
-        l++;    // number of line segments so far
+        l++;            // number of line segments so far
         // more than there can possibly be?
         if (l > shape[0] + shape[1] + shape[2] + 3) {
             error = vec4(0., 1., 0., 0.);
@@ -329,12 +333,12 @@ void gridtracer(in int volID, in float threshold, in vec3 start, in vec3 dir,
             return;
         }
     }
-
     // nothing found until the edge of the extended grid
     d = inf;
     n = vec3(nan, nan, nan);
     return;
 }
+
 
 // main function
 // in
@@ -356,7 +360,7 @@ void mainImage(in vec2 fragCoord,
     float dMin = inf;
     vec3 p, n;
     int surfID;
-    for (int sid = 0; sid < NSURFS; sid++) {
+    for (int sid = 0; sid < NS; sid++) {
         // get volume underlying surface
         int volID = surf[sid].volID;
         // transform camPos from world into voxel space
@@ -421,12 +425,34 @@ void mainImage(in vec2 fragCoord,
 }
 
 
+// footer ----------------------------------------------------------------------
 
-// Reference:
-// - GLSL
-//   https://www.khronos.org/opengl/wiki/Core_Language_%28GLSL%29
-//   https://www.khronos.org/registry/OpenGL-Refpages/gl4/index.php
-// - distance functions
-//   http://iquilezles.org/www/articles/distfunctions/distfunctions.htm
-//   http://9bitscience.blogspot.com/2013/07/raymarching-distance-fields_14.html
-//   http://iquilezles.org/www/articles/smin/smin.htm
+// this function wraps error checking and gamma correction
+out vec4 fragColor;
+void main() {
+    mainImage(gl_FragCoord.xy,
+        fragColor);
+
+    // error checking
+    // If there are out-of-range color components, show it as error color.
+    if (clamp(fragColor, 0., 1.) != fragColor) {
+        error = vec4(clamp(fragColor, 0., 1.).xyz, 0.);
+    }
+    // If an error color has been set, display it.
+    // Alpha component is used to induce blinking.
+    if (error != vec4(0., 0., 0., 0.)) {
+        if (fract(time * 2.) < 0.5) {
+            fragColor = error;
+        } else {
+            fragColor = error * error.a;
+        }
+        return; // skip gamma correction
+    }
+    // conversion from linear to sRGB colorspace ("gamma correction")
+    // adapted from https://www.shadertoy.com/view/lscSzl
+    vec3 linearRGB = fragColor.rgb;
+    vec3 a = 12.92 * linearRGB;
+    vec3 b = 1.055 * pow(linearRGB, vec3(1.0 / 2.4)) - 0.055;
+    vec3 c = step(vec3(0.0031308), linearRGB);
+    fragColor = vec4(mix(a, b, c), fragColor.a);
+}

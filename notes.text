@@ -124,3 +124,14 @@ neither if      d2² < 3 d1 d3
             // should never happen
             error = vec4(0., 1., 0., 0.);
         }
+
+
+# references
+
+- GLSL
+  https://www.khronos.org/opengl/wiki/Core_Language_%28GLSL%29
+  https://www.khronos.org/registry/OpenGL-Refpages/gl4/index.php
+- distance functions
+  http://iquilezles.org/www/articles/distfunctions/distfunctions.htm
+  http://9bitscience.blogspot.com/2013/07/raymarching-distance-fields_14.html
+  http://iquilezles.org/www/articles/smin/smin.htm
