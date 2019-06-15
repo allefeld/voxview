@@ -3,10 +3,6 @@
 
 """
 voxel viewer aka "brain game"
-
-a new beginning
-
-CA 2019-6–6
 """
 
 
@@ -15,11 +11,16 @@ import numpy as np
 import matplotlib.colors as mc
 import sdl2
 import OpenGL.GL as gl
+import struct
+import ctypes
+import time
 
 
-# volumes used for display
 @dataclass
 class Volume:
+    """
+    volumes used for display
+    """
     data:   np.array = np.array([[[0]]])
     affine: np.array = np.eye(4)
 
@@ -41,9 +42,11 @@ class Volume:
         return True
 
 
-# surfaces to be displayed
 @dataclass
 class Surface:
+    """
+    surfaces to be displayed
+    """
     volumeID:  int          # volume to be thresholded
     threshold: float        # threshold value
     ka:        np.array     # Phong ambient RGB
@@ -52,9 +55,20 @@ class Surface:
     alpha:     float        # Phong shininess
 
 
+def deadzone(x, dead):
+    """
+    utility function for game controller input
+
+    :param x:       raw gamecontroller input
+    :param dead:    value up to which value should be set to 0
+    :return:        "deadzoned" gamecontroller input
+    """
+    return np.copysign(max(0, np.abs(x) - dead) / (1 - dead), x)
+
+
 class VoxelViewer:
 
-    # environment --------------------------------------------------------------
+    # graphics -----------------------------------------------------------------
     #   This includes SDL2 (with game controller) and OpenGL context
 
     def initEnvironment(self):
@@ -70,44 +84,36 @@ class VoxelViewer:
         if self.gc is None:
             raise RuntimeError("No game controller found!")
         # create window & hide mouse
-        window = sdl2.SDL_CreateWindow(
+        self.window = sdl2.SDL_CreateWindow(
             "shader".encode('UTF-8'),
             sdl2.SDL_WINDOWPOS_UNDEFINED, sdl2.SDL_WINDOWPOS_UNDEFINED,
             800, 600,
             sdl2.SDL_WINDOW_OPENGL | sdl2.SDL_WINDOW_RESIZABLE)
         sdl2.SDL_ShowCursor(sdl2.SDL_DISABLE)
         # create OpenGL context
-        self.context = sdl2.SDL_GL_CreateContext(window)
+        sdl2.SDL_GL_CreateContext(self.window)
 
-    def initProgram(self):
+    def toggleFullscreen(self):
         """
-        init shader program
+        toggle between windowed and fullscreen mode
+        """
+        if sdl2.SDL_GetWindowFlags(self.window)\
+                & sdl2.SDL_WINDOW_FULLSCREEN_DESKTOP:
+            sdl2.SDL_SetWindowFullscreen(self.window, 0)
+        else:
+            sdl2.SDL_SetWindowFullscreen(
+                self.window, sdl2.SDL_WINDOW_FULLSCREEN_DESKTOP)
 
-        creates vertex data, creates and compiles vertex and fragment shader,
-        creates program object, and transfers vertex data
-        TODO: transfer volume and surface data
+    def createShader(self):
+        """
+        create shader program
+
+        creates and compiles vertex and fragment shader,
+        creates program object,
+        creates vertex data, transfers vertex data
+        and transfers volume and surface data
         """
         # based on http://www.hivestream.de/python-3-and-opengl-woes.html
-
-        # create and activate Vertex Array Object (VAO)
-        VAO = gl.glGenVertexArrays(1)
-        gl.glBindVertexArray(VAO)
-
-        # define vertex data describing a quad
-        #   The quad is coded as two triangles with two shared vertices,
-        # 1-2-3 & 2-3-4, a "triangle strip":
-        #   3-4
-        #   |\|
-        #   1-2
-        quad = np.array([-1, -1, 1, -1, -1, 1, 1, 1], dtype=np.float32)
-
-        # create a buffer object intended for the vertex data,
-        # therefore called vertex buffer object (VBO)
-        VBO = gl.glGenBuffers(1)
-        # initialize the VBO to be used for vertex data
-        gl.glBindBuffer(gl.GL_ARRAY_BUFFER, VBO)
-        # create mutable storage for the VBO and copy data into it
-        gl.glBufferData(gl.GL_ARRAY_BUFFER, quad, gl.GL_STATIC_DRAW)
 
         # create and compile vertex shader
         #   This vertex shader simply puts vertices at our 2D positions.
@@ -143,27 +149,46 @@ class VoxelViewer:
                 + gl.glGetShaderInfoLog(fragmentShader).decode('ASCII'))
 
         # create program object and attach shaders
-        program = gl.glCreateProgram()
-        gl.glAttachShader(program, vertexShader)
-        gl.glAttachShader(program, fragmentShader)
+        self.program = gl.glCreateProgram()
+        gl.glAttachShader(self.program, vertexShader)
+        gl.glAttachShader(self.program, fragmentShader)
         # make name of fragment shader color output explicit
-        gl.glBindFragDataLocation(program, 0, b"fragColor")
+        gl.glBindFragDataLocation(self.program, 0, b"fragColor")
         # link the program
-        gl.glLinkProgram(program)
-        if gl.glGetProgramiv(program, gl.GL_LINK_STATUS) == gl.GL_TRUE:
+        gl.glLinkProgram(self.program)
+        if gl.glGetProgramiv(self.program, gl.GL_LINK_STATUS) == gl.GL_TRUE:
             print("*** OpenGL program linked.")
         else:
             raise RuntimeError(
                 "OpenGL program could not be linked\n"
-                + gl.glGetProgramInfoLog(program).decode('ASCII'))
+                + gl.glGetProgramInfoLog(self.program).decode('ASCII'))
         # validate the program
-        gl.glValidateProgram(program)
+        gl.glValidateProgram(self.program)
         # activate the program
-        gl.glUseProgram(program)
+        gl.glUseProgram(self.program)
+
+        # create vertex data
+        # create and activate Vertex Array Object (VAO)
+        VAO = gl.glGenVertexArrays(1)
+        gl.glBindVertexArray(VAO)
+        # define vertex data describing a quad
+        #   The quad is coded as two triangles with two shared vertices,
+        # 1-2-3 & 2-3-4, a "triangle strip":
+        #   3-4
+        #   |\|
+        #   1-2
+        quad = np.array([-1, -1, 1, -1, -1, 1, 1, 1], dtype=np.float32)
+        # create a buffer object intended for the vertex data,
+        # therefore called vertex buffer object (VBO)
+        VBO = gl.glGenBuffers(1)
+        # initialize the VBO to be used for vertex data
+        gl.glBindBuffer(gl.GL_ARRAY_BUFFER, VBO)
+        # create mutable storage for the VBO and copy data into it
+        gl.glBufferData(gl.GL_ARRAY_BUFFER, quad, gl.GL_STATIC_DRAW)
 
         # specify the layout of our vertex data
         #   get a handle for the input variable position in our shader program
-        posAttrib = gl.glGetAttribLocation(program, b"position")
+        posAttrib = gl.glGetAttribLocation(self.program, b"position")
         #   activate this input
         gl.glEnableVertexAttribArray(posAttrib)
         #   format of the vertex data
@@ -174,6 +199,116 @@ class VoxelViewer:
         # the quad.
         gl.glVertexAttribPointer(posAttrib, 2, gl.GL_FLOAT, False, 0,
                                  gl.GLvoidp(0))
+
+        # transfer volume data
+        for volumeID, volume in enumerate(self.volumes):
+            # get data
+            data = volume.data.astype(np.float16)
+            data[np.isnan(data)] = 0  # TODO
+            # get affine transformation
+            #   rotation & scaling matrix (voxel -> world)
+            AM = volume.affine[:3, :3]
+            # translation (voxel -> world), world position of voxel [0, 0, 0]
+            AO = volume.affine[:3, 3]
+            # inverse rotation & scaling (world -> voxel)
+            AiM = np.linalg.inv(AM)
+            # volume array element
+            v = "vol[%d]" % volumeID
+            # pass volume data as texture -> uniform sampler3D
+            texture = gl.glGenTextures(1)
+            gl.glUniform1i(
+                gl.glGetUniformLocation(self.program, v + ".data"),
+                volumeID)
+            gl.glActiveTexture(gl.GL_TEXTURE0 + volumeID)
+            gl.glBindTexture(gl.GL_TEXTURE_3D, texture)
+            gl.glTexImage3D(gl.GL_TEXTURE_3D, 0, gl.GL_R16F, *data.shape,
+                            0, gl.GL_RED, gl.GL_FLOAT, data.flatten('F'))
+            # should the following two be necessary when using texelFetch?!
+            gl.glTexParameteri(gl.GL_TEXTURE_3D, gl.GL_TEXTURE_MAX_LEVEL, 0)
+            gl.glClampColor(gl.GL_CLAMP_READ_COLOR, gl.GL_FALSE)
+            gl.glEnable(gl.GL_TEXTURE_3D)
+            # pass affine transformation
+            gl.glUniformMatrix3fv(
+                gl.glGetUniformLocation(self.program, v + ".AM"),
+                1, gl.GL_FALSE, *AM.flatten('F'))
+            gl.glUniform3f(
+                gl.glGetUniformLocation(self.program, v + ".AO"),
+                *AO)
+            gl.glUniformMatrix3fv(
+                gl.glGetUniformLocation(self.program, v + ".AiM"),
+                1, gl.GL_FALSE, struct.pack('f' * 9, *AiM.flatten('F')))
+            # Why is struct.pack necessary for glUniformMatrix3fv,
+            # but not for glUniform3f?
+
+        # transfer surface data
+        for surfaceID, surface in enumerate(self.surfaces):
+            # surface array element
+            s = "surf[%d]" % surfaceID
+            # pass volume ID
+            gl.glUniform1i(
+                gl.glGetUniformLocation(self.program, s + ".volID"),
+                surface.volumeID)
+            # pass threshold
+            gl.glUniform1f(
+                gl.glGetUniformLocation(self.program, s + ".threshold"),
+                surface.threshold)
+            # pass Phong coefficients
+            gl.glUniform3f(
+                gl.glGetUniformLocation(self.program, s + ".ka"),
+                *surface.ka)
+            gl.glUniform3f(
+                gl.glGetUniformLocation(self.program, s + ".kd"),
+                *surface.kd)
+            gl.glUniform3f(
+                gl.glGetUniformLocation(self.program, s + ".ks"),
+                *surface.ks)
+            gl.glUniform1f(
+                gl.glGetUniformLocation(self.program, s + ".alpha"),
+                surface.alpha)
+
+    def renderScene(self):
+        """
+        render scene in window
+        """
+
+        # update window size
+        w = ctypes.c_int()
+        h = ctypes.c_int()
+        sdl2.SDL_GetWindowSize(self.window, w, h)
+        gl.glViewport(0, 0, w, h)
+
+        # update uniforms
+        # update generic uniforms
+        gl.glUniform2f(
+            gl.glGetUniformLocation(self.program, "resolution"),
+            float(w.value), float(h.value))
+        gl.glUniform1f(
+            gl.glGetUniformLocation(self.program, "time"),
+            self.time)
+        # update camera position uniform
+        gl.glUniform3f(
+            gl.glGetUniformLocation(self.program, "camPos"),
+            *self.camPos)
+        # update camera matrix uniform
+        gl.glUniformMatrix3fv(
+            gl.glGetUniformLocation(self.program, "camMatrix"), 1, gl.GL_FALSE,
+            struct.pack('f' * 9, *self.camMatrix.flatten('F')))
+
+        # use vertex buffer data to draw
+        #   The first four values of the vertex sequence are interpreted as
+        # specifying a triangle strip (see above).
+        gl.glClearColor(1.0, 0.5, 0.0, 1.0)
+        gl.glClear(gl.GL_COLOR_BUFFER_BIT)
+        gl.glDrawArrays(gl.GL_TRIANGLE_STRIP, 0, 4)
+
+        # time display updates
+        title = "shader:  %d - %.2f - %.2f" %\
+                (self.frame, self.time, self.frame / self.time)
+        sdl2.SDL_SetWindowTitle(self.window, title.encode('UTF-8'))
+
+        # swap buffers (glFlush + glXSwapBuffers?)
+        gl.glFinish()       # make timing tighter – doesn't seem to hurt much
+        sdl2.SDL_GL_SwapWindow(self.window)
 
     # shader state -------------------------------------------------------------
     #   This includes everything whose change makes it necessary to generate a
@@ -198,7 +333,12 @@ class VoxelViewer:
         The data should be 3- or 4-dimensional. For 4d, a single ``scan`` must
         be selected.
 
-        The return value is a volume ID starting from 0.
+        :param volumeSpec:
+            source of volume data
+        :param int scan:
+            selected volume for 4d data
+        :return:
+            numeric ID of the volume
         """
         # create Volume from volumeSpec
         if type(volumeSpec) == tuple:
@@ -230,11 +370,12 @@ class VoxelViewer:
         """
         add surface to the list of surfaces
 
-        A surface is defined by applying a ``threshold`` to a volume
-        (``volumeID`` returned by addVolume).
-
-        Its color is specified using a matplotlib ``colorSpec``,
-        see https://matplotlib.org/3.1.0/tutorials/colors/colors.html
+        :param int volumeID:
+            numeric ID of volume to use as basis, returned by addVolume
+        :param float threshold:
+            threshold applied to volume data
+        :param colorSpec:
+            color of the surface specified using matplotlib.colors syntax
         """
         # obtain RGB color from colorSpec
         color = mc.to_rgb(colorSpec)
@@ -247,19 +388,126 @@ class VoxelViewer:
         surface = Surface(volumeID, threshold, ka, kd, ks, alpha)
         self.surfaces.append(surface)
 
+    # scene state --------------------------------------------------------------
+    #   This includes everything whose change makes it necessary to make a new
+    # render.
+
+    def camDirections(self):
+        """
+        directions of camera coordinate system
+
+        :return: horizontal, vertical, center
+        """
+        # ray from the camera through the center of the frame
+        center = np.array([np.cos(self.camTheta) * np.cos(self.camPhi),
+                           -np.sin(self.camTheta) * np.cos(self.camPhi),
+                           np.sin(self.camPhi)])
+        # horizontal direction in the frame:
+        #  vector in the xy-plane that is orthogonal to the center ray
+        horizontal = np.array([-np.sin(self.camTheta),
+                               -np.cos(self.camTheta),
+                               0])
+        # vertical direction in the frame: orthogonal to center & horizontal
+        vertical = np.cross(horizontal, center)
+        return horizontal, vertical, center
+
+    def initSceneState(self):
+        self.startTime = time.time()
+        self.time = self.startTime
+        self.frame = 0
+        self.camPos = np.array([0., 200., 0.])
+        self.camTheta = np.pi / 2
+        self.camPhi = 0
+        self.camMatrix = np.column_stack(self.camDirections())
+
+    def updateSceneState(self):
+        """
+        update scene state
+        """
+
+        # update time
+        t = time.time() - self.startTime
+        td = t - self.time
+        self.time = t
+        self.frame += 1
+        # get controller input
+        rt = sdl2.SDL_GameControllerGetAxis(
+            self.gc, sdl2.SDL_CONTROLLER_AXIS_TRIGGERRIGHT) / 32767
+        ls = (np.array([
+            sdl2.SDL_GameControllerGetAxis(
+                self.gc, sdl2.SDL_CONTROLLER_AXIS_LEFTX),
+            sdl2.SDL_GameControllerGetAxis(
+                self.gc, sdl2.SDL_CONTROLLER_AXIS_LEFTY)]) + 0.5) / 32767.5
+        rs = (np.array([
+            sdl2.SDL_GameControllerGetAxis(
+                self.gc, sdl2.SDL_CONTROLLER_AXIS_RIGHTX),
+            sdl2.SDL_GameControllerGetAxis(
+                self.gc, sdl2.SDL_CONTROLLER_AXIS_RIGHTY)]) + 0.5) / 32767.5
+        du = sdl2.SDL_GameControllerGetButton(
+            self.gc, sdl2.SDL_CONTROLLER_BUTTON_DPAD_UP)
+        dd = sdl2.SDL_GameControllerGetButton(
+            self.gc, sdl2.SDL_CONTROLLER_BUTTON_DPAD_DOWN)
+
+        # update scene state
+        # camera direction
+        if self.frame > 1:
+            self.camTheta += deadzone(rs[0], 0.25) * 0.05
+            self.camPhi += -deadzone(rs[1], 0.25) * 0.05
+        self.camPhi = np.clip(self.camPhi, -np.pi / 2, np.pi / 2)
+        # directions of camera coordinate system
+        horizontal, vertical, center = self.camDirections()
+        # camera position
+        if self.frame > 1:
+            self.camPos += (deadzone(ls[0], 0.25) * horizontal
+                            - deadzone(ls[1], 0.25) * center
+                            + du * vertical
+                            - dd * vertical) * td * 20
+        # camera field of view -> zoom
+        fovf = np.tan(np.radians(30 * (1 - rt)))
+        # camera matrix
+        self.camMatrix = np.column_stack(
+            (horizontal * fovf, vertical * fovf, center))
+
     # --------------------------------------------------------------------------
 
     def __init__(self):
         # init environment
-        self.gc = self.context = None
+        self.gc = self.window = self.program = None
         self.initEnvironment()
         # init shader state
         self.volumes = self.surfaces = None
         self.initShaderState()
+        # init scene state
+        self.startTime = self.time = self.frame = self.camPos\
+            = self.camTheta = self.camPhi = self.camMatrix = None
+        self.initSceneState()
 
     def run(self):
-        # init shader program
-        self.initProgram()
+        self.createShader()
+        event = sdl2.SDL_Event()
+        running = True
+        while running:
+            # process keyboard and window events
+            while sdl2.SDL_PollEvent(ctypes.byref(event)) != 0:
+                if event.type == sdl2.SDL_QUIT:
+                    running = False
+                elif event.type == sdl2.SDL_KEYDOWN:
+                    if event.key.keysym.sym == sdl2.SDLK_ESCAPE:
+                        running = False
+                    elif event.key.keysym.sym == sdl2.SDLK_f:
+                        self.toggleFullscreen()
+            self.updateSceneState()
+            # render
+            self.renderScene()
+        # gl.glDisableVertexAttribArray(posAttrib)
+        # gl.glDeleteProgram(program)
+        # gl.glDeleteShader(fragmentShader)
+        # gl.glDeleteShader(vertexShader)
+        # gl.glDeleteBuffers(1, [VBO])
+        # gl.glDeleteVertexArrays(1, [VAO])
+        # sdl2.SDL_GL_DeleteContext(context)
+        # sdl2.SDL_DestroyWindow(window)
+        # sdl2.SDL_Quit()
 
 
 # user program

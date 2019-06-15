@@ -3,7 +3,7 @@
 vec4 error = vec4(0., 0., 0., 0.);
 
 #define NV 0                // 1 replaced by len(self.volumes)
-#define NS 1                // 1 replaced by len(self.surfaces)
+#define NS 0                // 1 replaced by len(self.surfaces)
 
 uniform vec2  resolution;   // viewport resolution (in pixels)
 uniform float time;         // shader playback time (in seconds)
