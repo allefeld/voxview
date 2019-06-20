@@ -1,9 +1,11 @@
-#version 430 core
+#version 130
+#extension GL_ARB_arrays_of_arrays : enable
+
 // for debugging, see main()
 vec4 error = vec4(0., 0., 0., 0.);
 
-#define NV 0                // 1 replaced by len(self.volumes)
-#define NS 0                // 1 replaced by len(self.surfaces)
+#define NV 0                // 0 replaced by len(self.volumes)
+#define NS 0                // 0 replaced by len(self.surfaces)
 
 uniform vec2  resolution;   // viewport resolution (in pixels)
 uniform float time;         // shader playback time (in seconds)
@@ -343,7 +345,7 @@ void gridtracer(in int volID, in float threshold, in vec3 start, in vec3 dir,
 // main function
 // in
 //   vec2 fragCoord:    coordinates of the current (pixel)
-//                      w/o antialiasing values are in [0.5, resolution - 0.5]
+//                      values are in [0.5, resolution - 0.5]
 // out
 //   vec4 fragColor:    color the current fragment (pixel) should be shown in
 void mainImage(in vec2 fragCoord,
@@ -406,10 +408,10 @@ void mainImage(in vec2 fragCoord,
     // ambient illumination
     vec3 k = surf[surfID].ka;
     // normalized vectors
-    vec3 v = normalize(camPos - p);         // direction to the viewer
+    vec3 v = normalize(camPos - p);             // direction to the viewer
     for (int i = 0; i < lightDir.length; i++) {
-        vec3 l = normalize(lightDir[i]);// direction to light
-        vec3 r = normalize(reflect(-l, n));// direction of reflected light
+        vec3 l = normalize(lightDir[i]);        // direction to light
+        vec3 r = normalize(reflect(-l, n));     // direction of reflected light
         // scalar products
         float drv = dot(r, v);
         float dln = dot(l, n);

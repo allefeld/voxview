@@ -14,6 +14,7 @@ import OpenGL.GL as gl
 import struct
 import ctypes
 import time
+from threading import Thread
 
 
 @dataclass
@@ -33,6 +34,11 @@ class Volume:
         of element-wise comparisons. Moreover, it is necessary to use
         np.testing.assert_equal because np.array_equal treats NaN as
         nonidentical.
+
+        :param Volume volume:
+            volume object to compare with
+        :return:
+            whether the two volume objects hold the same data
         """
         try:
             np.testing.assert_equal(self.data, volume.data)
@@ -55,23 +61,17 @@ class Surface:
     alpha:     float        # Phong shininess
 
 
-def deadzone(x, dead):
-    """
-    utility function for game controller input
-
-    :param x:       raw gamecontroller input
-    :param dead:    value up to which value should be set to 0
-    :return:        "deadzoned" gamecontroller input
-    """
-    return np.copysign(max(0, np.abs(x) - dead) / (1 - dead), x)
-
-
 class VoxelViewer:
 
-    # graphics -----------------------------------------------------------------
-    #   This includes SDL2 (with game controller) and OpenGL context
+    # environment --------------------------------------------------------------
+    #
+    # The basic stuff that's necessary for the rest to work.
+    #
+    # gc:       SDL2 game controller object
+    # window:   SLD2 window object
+    # program:  OpenGL program object
 
-    def initEnvironment(self):
+    def _initEnvironment(self):
         # initialize SDL
         sdl2.SDL_Init(sdl2.SDL_INIT_VIDEO | sdl2.SDL_INIT_GAMECONTROLLER)
 
@@ -85,7 +85,7 @@ class VoxelViewer:
             raise RuntimeError("No game controller found!")
         # create window & hide mouse
         self.window = sdl2.SDL_CreateWindow(
-            "shader".encode('UTF-8'),
+            b'',
             sdl2.SDL_WINDOWPOS_UNDEFINED, sdl2.SDL_WINDOWPOS_UNDEFINED,
             800, 600,
             sdl2.SDL_WINDOW_OPENGL | sdl2.SDL_WINDOW_RESIZABLE)
@@ -93,7 +93,7 @@ class VoxelViewer:
         # create OpenGL context
         sdl2.SDL_GL_CreateContext(self.window)
 
-    def toggleFullscreen(self):
+    def _toggleFullscreen(self):
         """
         toggle between windowed and fullscreen mode
         """
@@ -104,7 +104,7 @@ class VoxelViewer:
             sdl2.SDL_SetWindowFullscreen(
                 self.window, sdl2.SDL_WINDOW_FULLSCREEN_DESKTOP)
 
-    def createShader(self):
+    def _createShader(self):
         """
         create shader program
 
@@ -115,13 +115,30 @@ class VoxelViewer:
         """
         # based on http://www.hivestream.de/python-3-and-opengl-woes.html
 
+        # GLSL doesn't like 0-size arrays. So let's give the shader to show
+        # something by default.
+        vol = self.volumes
+        if len(vol) == 0:
+            vol = [Volume(np.array([[[1]]]), np.eye(4))]
+        surf = self.surfaces
+        if len(surf) == 0:
+            surf = [Surface(0, 0.5,
+                            np.array([1., 1., 1.]) * 0.3,
+                            np.array([1., 1., 1.]) * 0.3,
+                            np.array([1., 1., 1.]) * 0.1,
+                            10.)]
+        print(vol)
+        print(surf)
+
         # create and compile vertex shader
         #   This vertex shader simply puts vertices at our 2D positions.
-        vertexShaderSource = """#version 100
+        vertexShaderSource = """
+            #version 130
             in vec2 position;
             void main() {
                 gl_Position = vec4(position, 0., 1.);
-            }"""
+            }
+            """
         vertexShader = gl.glCreateShader(gl.GL_VERTEX_SHADER)
         gl.glShaderSource(vertexShader, vertexShaderSource)
         gl.glCompileShader(vertexShader)
@@ -136,8 +153,8 @@ class VoxelViewer:
         with open("voxelviewer.glsl", 'r') as file:
             fragmentShaderSource = file.read()
         fragmentShaderSource = fragmentShaderSource \
-            .replace("#define NV 0", "#define NV %d" % len(self.volumes))\
-            .replace("#define NS 0", "#define NS %d" % len(self.surfaces))
+            .replace("#define NV 0", "#define NV %d" % len(vol))\
+            .replace("#define NS 0", "#define NS %d" % len(surf))
         fragmentShader = gl.glCreateShader(gl.GL_FRAGMENT_SHADER)
         gl.glShaderSource(fragmentShader, fragmentShaderSource)
         gl.glCompileShader(fragmentShader)
@@ -201,7 +218,7 @@ class VoxelViewer:
                                  gl.GLvoidp(0))
 
         # transfer volume data
-        for volumeID, volume in enumerate(self.volumes):
+        for volumeID, volume in enumerate(vol):
             # get data
             data = volume.data.astype(np.float16)
             data[np.isnan(data)] = 0  # TODO
@@ -241,7 +258,7 @@ class VoxelViewer:
             # but not for glUniform3f?
 
         # transfer surface data
-        for surfaceID, surface in enumerate(self.surfaces):
+        for surfaceID, surface in enumerate(surf):
             # surface array element
             s = "surf[%d]" % surfaceID
             # pass volume ID
@@ -266,9 +283,9 @@ class VoxelViewer:
                 gl.glGetUniformLocation(self.program, s + ".alpha"),
                 surface.alpha)
 
-    def renderScene(self):
+    def _renderFrame(self):
         """
-        render scene in window
+        render frame
         """
 
         # update window size
@@ -290,9 +307,12 @@ class VoxelViewer:
             gl.glGetUniformLocation(self.program, "camPos"),
             *self.camPos)
         # update camera matrix uniform
+        horizontal, vertical, center = self._camDirections()
+        camMatrix = np.column_stack(
+            (horizontal * self.camFovF, vertical * self.camFovF, center))
         gl.glUniformMatrix3fv(
             gl.glGetUniformLocation(self.program, "camMatrix"), 1, gl.GL_FALSE,
-            struct.pack('f' * 9, *self.camMatrix.flatten('F')))
+            struct.pack('f' * 9, *camMatrix.flatten('F')))
 
         # use vertex buffer data to draw
         #   The first four values of the vertex sequence are interpreted as
@@ -302,19 +322,27 @@ class VoxelViewer:
         gl.glDrawArrays(gl.GL_TRIANGLE_STRIP, 0, 4)
 
         # time display updates
-        title = "shader:  %d - %.2f - %.2f" %\
+        title = "VoxelViewer:  %d - %.2f - %.2f" %\
                 (self.frame, self.time, self.frame / self.time)
         sdl2.SDL_SetWindowTitle(self.window, title.encode('UTF-8'))
+        # These frequent title updates make the KDE panel freeze, see
+        # https://bugs.kde.org/show_bug.cgi?id=365317
+        # Maybe fix by showing information via overlay in window?
 
         # swap buffers (glFlush + glXSwapBuffers?)
-        gl.glFinish()       # make timing tighter – doesn't seem to hurt much
         sdl2.SDL_GL_SwapWindow(self.window)
+        # make timing tighter – doesn't seem to hurt framerate
+        gl.glFinish()
 
-    # shader state -------------------------------------------------------------
-    #   This includes everything whose change makes it necessary to generate a
+    # scene state -------------------------------------------------------------
+    #
+    # This includes everything whose change makes it necessary to generate a
     # new shader program.
+    #
+    # volumes:  Volumes used for display
+    # surfaces: Surfaces to be displayed
 
-    def initShaderState(self):
+    def _initSceneState(self):
         self.volumes = []
         self.surfaces = []
 
@@ -388,11 +416,29 @@ class VoxelViewer:
         surface = Surface(volumeID, threshold, ka, kd, ks, alpha)
         self.surfaces.append(surface)
 
-    # scene state --------------------------------------------------------------
-    #   This includes everything whose change makes it necessary to make a new
-    # render.
+    # frame state --------------------------------------------------------------
+    #
+    # This includes everything whose change makes it necessary to render a new
+    # frame, as well as timing.
+    #
+    # startTime:    time at which the scene was initialized
+    # time:         time at current / last frame
+    # frame:        number of current frame
+    # camPos:       position of the camera in world space
+    # camTheta:     azimuth of camera view
+    # camPhi:       elevation of camera view
+    # camFovF:      field-of-view factor of camera view
 
-    def camDirections(self):
+    def _initFrameState(self):
+        self.startTime = time.time()
+        self.time = self.startTime
+        self.frame = 0
+        self.camPos = np.array([0., 200., 0.])
+        self.camTheta = np.pi / 2
+        self.camPhi = 0
+        self.camFovF = np.tan(np.radians(30))
+
+    def _camDirections(self):
         """
         directions of camera coordinate system
 
@@ -409,20 +455,24 @@ class VoxelViewer:
                                0])
         # vertical direction in the frame: orthogonal to center & horizontal
         vertical = np.cross(horizontal, center)
+
         return horizontal, vertical, center
 
-    def initSceneState(self):
-        self.startTime = time.time()
-        self.time = self.startTime
-        self.frame = 0
-        self.camPos = np.array([0., 200., 0.])
-        self.camTheta = np.pi / 2
-        self.camPhi = 0
-        self.camMatrix = np.column_stack(self.camDirections())
-
-    def updateSceneState(self):
+    @staticmethod
+    def _deadzone(x, dead):
         """
-        update scene state
+        utility function for game controller input
+        to neutralize small deviations from zero
+
+        :param x:       raw gamecontroller input
+        :param dead:    value up to which value should be set to 0
+        :return:        "deadzoned" gamecontroller input
+        """
+        return np.copysign(max(0, np.abs(x) - dead) / (1 - dead), x)
+
+    def _updateFrameState(self):
+        """
+        update frame state
         """
 
         # update time
@@ -430,6 +480,7 @@ class VoxelViewer:
         td = t - self.time
         self.time = t
         self.frame += 1
+
         # get controller input
         rt = sdl2.SDL_GameControllerGetAxis(
             self.gc, sdl2.SDL_CONTROLLER_AXIS_TRIGGERRIGHT) / 32767
@@ -448,42 +499,41 @@ class VoxelViewer:
         dd = sdl2.SDL_GameControllerGetButton(
             self.gc, sdl2.SDL_CONTROLLER_BUTTON_DPAD_DOWN)
 
-        # update scene state
+        # update camera
         # camera direction
         if self.frame > 1:
-            self.camTheta += deadzone(rs[0], 0.25) * 0.05
-            self.camPhi += -deadzone(rs[1], 0.25) * 0.05
+            self.camTheta += VoxelViewer._deadzone(rs[0], 0.25) * 0.05
+            self.camPhi += -VoxelViewer._deadzone(rs[1], 0.25) * 0.05
         self.camPhi = np.clip(self.camPhi, -np.pi / 2, np.pi / 2)
         # directions of camera coordinate system
-        horizontal, vertical, center = self.camDirections()
+        horizontal, vertical, center = self._camDirections()
         # camera position
         if self.frame > 1:
-            self.camPos += (deadzone(ls[0], 0.25) * horizontal
-                            - deadzone(ls[1], 0.25) * center
+            self.camPos += (VoxelViewer._deadzone(ls[0], 0.25) * horizontal
+                            - VoxelViewer._deadzone(ls[1], 0.25) * center
                             + du * vertical
                             - dd * vertical) * td * 20
         # camera field of view -> zoom
-        fovf = np.tan(np.radians(30 * (1 - rt)))
-        # camera matrix
-        self.camMatrix = np.column_stack(
-            (horizontal * fovf, vertical * fovf, center))
+        self.camFovF = np.tan(np.radians(30 * (1 - rt)))
 
     # --------------------------------------------------------------------------
 
     def __init__(self):
-        # init environment
-        self.gc = self.window = self.program = None
-        self.initEnvironment()
-        # init shader state
-        self.volumes = self.surfaces = None
-        self.initShaderState()
         # init scene state
-        self.startTime = self.time = self.frame = self.camPos\
-            = self.camTheta = self.camPhi = self.camMatrix = None
-        self.initSceneState()
+        self._initSceneState()
+        # init frame state
+        self._initFrameState()
 
-    def run(self):
-        self.createShader()
+        # start event loop as thread
+        self.thread = Thread(target=self._loop)
+        self.thread.start()
+
+    def _loop(self):
+        # init environment
+        self._initEnvironment()
+        # create initial shader
+        self._createShader()
+
         event = sdl2.SDL_Event()
         running = True
         while running:
@@ -495,10 +545,17 @@ class VoxelViewer:
                     if event.key.keysym.sym == sdl2.SDLK_ESCAPE:
                         running = False
                     elif event.key.keysym.sym == sdl2.SDLK_f:
-                        self.toggleFullscreen()
-            self.updateSceneState()
-            # render
-            self.renderScene()
+                        self._toggleFullscreen()
+            # update frame state
+            self._updateFrameState()
+            # render frame
+            self._renderFrame()
+
+            # give other thread (and processes) a chance to run
+            #   1e-6 = 1 µs results in about 65 µs, that seems to be enough to
+            # make the object responsive to method calls from another thread.
+            time.sleep(1e-6)
+
         # gl.glDisableVertexAttribArray(posAttrib)
         # gl.glDeleteProgram(program)
         # gl.glDeleteShader(fragmentShader)
@@ -507,14 +564,16 @@ class VoxelViewer:
         # gl.glDeleteVertexArrays(1, [VAO])
         # sdl2.SDL_GL_DeleteContext(context)
         # sdl2.SDL_DestroyWindow(window)
-        # sdl2.SDL_Quit()
+        sdl2.SDL_Quit()
 
 
-# user program
-vv = VoxelViewer()
-vol1 = vv.addVolume("sLPcomb-radek-X-C-PxC.nii")
-vol2 = vv.addVolume((np.array([[[1]]]), np.eye(4)))
-vol3 = vv.addVolume("sLPcomb-radek-X-C-PxC.nii")
-vv.addSurface(vol1, 0.007, 'r')
-vv.addSurface(vol2, 0.5, (0, 0, 1))
-vv.run()
+if __name__ == "__main__":
+    # user program
+    vv = VoxelViewer()
+
+    vol1 = vv.addVolume("sLPcomb-radek-X-C-PxC.nii")
+    vv.addSurface(vol1, 0.007, 'r')
+
+    time.sleep(1)
+    vol2 = vv.addVolume((np.array([[[1]]]), np.eye(4)))
+    vv.addSurface(vol2, 0.5, (0, 0, 1))
