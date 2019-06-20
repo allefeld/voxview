@@ -67,11 +67,20 @@ class VoxelViewer:
     #
     # The basic stuff that's necessary for the rest to work.
     #
-    # gc:       SDL2 game controller object
-    # window:   SLD2 window object
-    # program:  OpenGL program object
+    # gc:               SDL2 game controller object
+    # window:           SLD2 window object
+    # context:          OpenGL context
+    # vertexShader:     OpenGL vertex shader object
+    # fragmentShader:   OpenGL fragment shader object
+    # program:          OpenGL program object
+    # VAO:              OpenGL vertex array object
+    # VBO:              OpenGL vertex buffer object
+    # posAttrib:        OpenGL vertex shader position attribute
 
-    def _initEnvironment(self):
+    def _createEnvironment(self):
+        """
+        create environment
+        """
         # initialize SDL
         sdl2.SDL_Init(sdl2.SDL_INIT_VIDEO | sdl2.SDL_INIT_GAMECONTROLLER)
 
@@ -91,18 +100,16 @@ class VoxelViewer:
             sdl2.SDL_WINDOW_OPENGL | sdl2.SDL_WINDOW_RESIZABLE)
         sdl2.SDL_ShowCursor(sdl2.SDL_DISABLE)
         # create OpenGL context
-        sdl2.SDL_GL_CreateContext(self.window)
+        self.context = sdl2.SDL_GL_CreateContext(self.window)
 
-    def _toggleFullscreen(self):
+    def _destroyEnvironment(self):
         """
-        toggle between windowed and fullscreen mode
+        destroy environment
+        :return:
         """
-        if sdl2.SDL_GetWindowFlags(self.window)\
-                & sdl2.SDL_WINDOW_FULLSCREEN_DESKTOP:
-            sdl2.SDL_SetWindowFullscreen(self.window, 0)
-        else:
-            sdl2.SDL_SetWindowFullscreen(
-                self.window, sdl2.SDL_WINDOW_FULLSCREEN_DESKTOP)
+        sdl2.SDL_GL_DeleteContext(self.context)
+        sdl2.SDL_DestroyWindow(self.window)
+        sdl2.SDL_Quit()
 
     def _createShader(self):
         """
@@ -115,8 +122,8 @@ class VoxelViewer:
         """
         # based on http://www.hivestream.de/python-3-and-opengl-woes.html
 
-        # GLSL doesn't like 0-size arrays. So let's give the shader to show
-        # something by default.
+        # GLSL doesn't like 0-size arrays. So let's give the shader something
+        # to show by default.
         vol = self.volumes
         if len(vol) == 0:
             vol = [Volume(np.array([[[1]]]), np.eye(4))]
@@ -127,8 +134,6 @@ class VoxelViewer:
                             np.array([1., 1., 1.]) * 0.3,
                             np.array([1., 1., 1.]) * 0.1,
                             10.)]
-        print(vol)
-        print(surf)
 
         # create and compile vertex shader
         #   This vertex shader simply puts vertices at our 2D positions.
@@ -139,15 +144,16 @@ class VoxelViewer:
                 gl_Position = vec4(position, 0., 1.);
             }
             """
-        vertexShader = gl.glCreateShader(gl.GL_VERTEX_SHADER)
-        gl.glShaderSource(vertexShader, vertexShaderSource)
-        gl.glCompileShader(vertexShader)
-        if gl.glGetShaderiv(vertexShader, gl.GL_COMPILE_STATUS) == gl.GL_TRUE:
+        self.vertexShader = gl.glCreateShader(gl.GL_VERTEX_SHADER)
+        gl.glShaderSource(self.vertexShader, vertexShaderSource)
+        gl.glCompileShader(self.vertexShader)
+        if (gl.glGetShaderiv(self.vertexShader, gl.GL_COMPILE_STATUS)
+                == gl.GL_TRUE):
             print("*** OpenGL vertex shader compiled.")
         else:
             raise RuntimeError(
                 "OpenGL vertex shader could not be compiled\n"
-                + gl.glGetShaderInfoLog(vertexShader).decode('ASCII'))
+                + gl.glGetShaderInfoLog(self.vertexShader).decode('ASCII'))
 
         # create and compile fragment shader
         with open("voxelviewer.glsl", 'r') as file:
@@ -155,20 +161,21 @@ class VoxelViewer:
         fragmentShaderSource = fragmentShaderSource \
             .replace("#define NV 0", "#define NV %d" % len(vol))\
             .replace("#define NS 0", "#define NS %d" % len(surf))
-        fragmentShader = gl.glCreateShader(gl.GL_FRAGMENT_SHADER)
-        gl.glShaderSource(fragmentShader, fragmentShaderSource)
-        gl.glCompileShader(fragmentShader)
-        if gl.glGetShaderiv(fragmentShader, gl.GL_COMPILE_STATUS) == gl.GL_TRUE:
+        self.fragmentShader = gl.glCreateShader(gl.GL_FRAGMENT_SHADER)
+        gl.glShaderSource(self.fragmentShader, fragmentShaderSource)
+        gl.glCompileShader(self.fragmentShader)
+        if (gl.glGetShaderiv(self.fragmentShader, gl.GL_COMPILE_STATUS)
+                == gl.GL_TRUE):
             print("*** OpenGL fragment shader compiled.")
         else:
             raise RuntimeError(
                 "OpenGL fragment shader could not be compiled\n"
-                + gl.glGetShaderInfoLog(fragmentShader).decode('ASCII'))
+                + gl.glGetShaderInfoLog(self.fragmentShader).decode('ASCII'))
 
         # create program object and attach shaders
         self.program = gl.glCreateProgram()
-        gl.glAttachShader(self.program, vertexShader)
-        gl.glAttachShader(self.program, fragmentShader)
+        gl.glAttachShader(self.program, self.vertexShader)
+        gl.glAttachShader(self.program, self.fragmentShader)
         # make name of fragment shader color output explicit
         gl.glBindFragDataLocation(self.program, 0, b"fragColor")
         # link the program
@@ -186,42 +193,45 @@ class VoxelViewer:
 
         # create vertex data
         # create and activate Vertex Array Object (VAO)
-        VAO = gl.glGenVertexArrays(1)
-        gl.glBindVertexArray(VAO)
+        self.VAO = gl.glGenVertexArrays(1)
+        gl.glBindVertexArray(self.VAO)
         # define vertex data describing a quad
         #   The quad is coded as two triangles with two shared vertices,
         # 1-2-3 & 2-3-4, a "triangle strip":
         #   3-4
         #   |\|
         #   1-2
-        quad = np.array([-1, -1, 1, -1, -1, 1, 1, 1], dtype=np.float32)
+        quad = np.array([-1, -1,
+                         1, -1,
+                         -1, 1,
+                         1, 1], dtype=np.float32)
         # create a buffer object intended for the vertex data,
         # therefore called vertex buffer object (VBO)
-        VBO = gl.glGenBuffers(1)
+        self.VBO = gl.glGenBuffers(1)
         # initialize the VBO to be used for vertex data
-        gl.glBindBuffer(gl.GL_ARRAY_BUFFER, VBO)
+        gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.VBO)
         # create mutable storage for the VBO and copy data into it
         gl.glBufferData(gl.GL_ARRAY_BUFFER, quad, gl.GL_STATIC_DRAW)
 
         # specify the layout of our vertex data
         #   get a handle for the input variable position in our shader program
-        posAttrib = gl.glGetAttribLocation(self.program, b"position")
+        self.posAttrib = gl.glGetAttribLocation(self.program, b"position")
         #   activate this input
-        gl.glEnableVertexAttribArray(posAttrib)
+        gl.glEnableVertexAttribArray(self.posAttrib)
         #   format of the vertex data
         # Here it is defined as consisting of pairs of GL_FLOAT type items
         # with no other items between them (stride parameter 0) starting at
         # offset 0 in the buffer. This function refers to the currently bound
         # GL_ARRAY_BUFFER, which is our vbo with the corner coordinates of
         # the quad.
-        gl.glVertexAttribPointer(posAttrib, 2, gl.GL_FLOAT, False, 0,
+        gl.glVertexAttribPointer(self.posAttrib, 2, gl.GL_FLOAT, False, 0,
                                  gl.GLvoidp(0))
 
         # transfer volume data
         for volumeID, volume in enumerate(vol):
             # get data
             data = volume.data.astype(np.float16)
-            data[np.isnan(data)] = 0  # TODO
+            data[np.isnan(data)] = 0    # TODO
             # get affine transformation
             #   rotation & scaling matrix (voxel -> world)
             AM = volume.affine[:3, :3]
@@ -283,6 +293,20 @@ class VoxelViewer:
                 gl.glGetUniformLocation(self.program, s + ".alpha"),
                 surface.alpha)
 
+        # indicate that scene state is implemented
+        self.sceneChanged = False
+
+    def _destroyShader(self):
+        """
+        release resources acquired by shader program creation
+        """
+        gl.glDisableVertexAttribArray(self.posAttrib)
+        gl.glDeleteProgram(self.program)
+        gl.glDeleteShader(self.fragmentShader)
+        gl.glDeleteShader(self.vertexShader)
+        gl.glDeleteBuffers(1, [self.VBO])
+        gl.glDeleteVertexArrays(1, [self.VAO])
+
     def _renderFrame(self):
         """
         render frame
@@ -334,17 +358,30 @@ class VoxelViewer:
         # make timing tighter – doesn't seem to hurt framerate
         gl.glFinish()
 
+    def _toggleFullscreen(self):
+        """
+        toggle between windowed and fullscreen mode
+        """
+        if sdl2.SDL_GetWindowFlags(self.window)\
+                & sdl2.SDL_WINDOW_FULLSCREEN_DESKTOP:
+            sdl2.SDL_SetWindowFullscreen(self.window, 0)
+        else:
+            sdl2.SDL_SetWindowFullscreen(
+                self.window, sdl2.SDL_WINDOW_FULLSCREEN_DESKTOP)
+
     # scene state -------------------------------------------------------------
     #
     # This includes everything whose change makes it necessary to generate a
     # new shader program.
     #
-    # volumes:  Volumes used for display
-    # surfaces: Surfaces to be displayed
+    # volumes:      volumes used for display
+    # surfaces:     surfaces to be displayed
+    # sceneChanged: has scene changed?
 
-    def _initSceneState(self):
+    def _initializeSceneState(self):
         self.volumes = []
         self.surfaces = []
+        self.sceneChanged = None
 
     def addVolume(self, volumeSpec, scan=0):
         """
@@ -391,6 +428,8 @@ class VoxelViewer:
             self.volumes.append(volume)
         else:
             volumeID = self.volumes.index(volume)
+        # indicate scene change
+        self.sceneChanged = True
         # return the index as the volume ID
         return volumeID
 
@@ -415,6 +454,8 @@ class VoxelViewer:
         # create Surface and add it to the list
         surface = Surface(volumeID, threshold, ka, kd, ks, alpha)
         self.surfaces.append(surface)
+        # indicate scene change
+        self.sceneChanged = True
 
     # frame state --------------------------------------------------------------
     #
@@ -429,14 +470,14 @@ class VoxelViewer:
     # camPhi:       elevation of camera view
     # camFovF:      field-of-view factor of camera view
 
-    def _initFrameState(self):
+    def _initializeFrameState(self):
         self.startTime = time.time()
         self.time = self.startTime
         self.frame = 0
         self.camPos = np.array([0., 200., 0.])
         self.camTheta = np.pi / 2
         self.camPhi = 0
-        self.camFovF = np.tan(np.radians(30))
+        self.camFovF = None
 
     def _camDirections(self):
         """
@@ -519,61 +560,64 @@ class VoxelViewer:
     # --------------------------------------------------------------------------
 
     def __init__(self):
-        # init scene state
-        self._initSceneState()
-        # init frame state
-        self._initFrameState()
+        # initialize scene state
+        self._initializeSceneState()
+        # initialize frame state
+        self._initializeFrameState()
 
         # start event loop as thread
         self.thread = Thread(target=self._loop)
         self.thread.start()
 
     def _loop(self):
-        # init environment
-        self._initEnvironment()
+        # create environment
+        self._createEnvironment()
         # create initial shader
         self._createShader()
 
         event = sdl2.SDL_Event()
         running = True
         while running:
+            # has scene changed?
+            if self.sceneChanged:
+                # recreate shader
+                self._destroyShader()
+                self._createShader()
+
             # process keyboard and window events
             while sdl2.SDL_PollEvent(ctypes.byref(event)) != 0:
                 if event.type == sdl2.SDL_QUIT:
+                    # window close
                     running = False
                 elif event.type == sdl2.SDL_KEYDOWN:
                     if event.key.keysym.sym == sdl2.SDLK_ESCAPE:
+                        # keyboard ESC
                         running = False
                     elif event.key.keysym.sym == sdl2.SDLK_f:
+                        # keyboard f/F
                         self._toggleFullscreen()
             # update frame state
             self._updateFrameState()
             # render frame
             self._renderFrame()
 
-            # give other thread (and processes) a chance to run
+            # give main thread (and other threads / processes) a chance to run
             #   1e-6 = 1 µs results in about 65 µs, that seems to be enough to
-            # make the object responsive to method calls from another thread.
+            # make the object responsive to method calls from the main thread.
             time.sleep(1e-6)
 
-        # gl.glDisableVertexAttribArray(posAttrib)
-        # gl.glDeleteProgram(program)
-        # gl.glDeleteShader(fragmentShader)
-        # gl.glDeleteShader(vertexShader)
-        # gl.glDeleteBuffers(1, [VBO])
-        # gl.glDeleteVertexArrays(1, [VAO])
-        # sdl2.SDL_GL_DeleteContext(context)
-        # sdl2.SDL_DestroyWindow(window)
-        sdl2.SDL_Quit()
+        # destroy shader
+        self._destroyShader()
+        # destroy environment
+        self._destroyEnvironment()
 
 
 if __name__ == "__main__":
-    # user program
+    # example user program
     vv = VoxelViewer()
 
-    vol1 = vv.addVolume("sLPcomb-radek-X-C-PxC.nii")
-    vv.addSurface(vol1, 0.007, 'r')
+    vol = vv.addVolume("sLPcomb-radek-X-C-PxC.nii")
+    vv.addSurface(vol, 0.0174, 'b')
 
     time.sleep(1)
-    vol2 = vv.addVolume((np.array([[[1]]]), np.eye(4)))
-    vv.addSurface(vol2, 0.5, (0, 0, 1))
+    vv.addSurface(vol, 0.007, 'r')

@@ -8,6 +8,8 @@
    Section 2.3.4.1 of the OpenGL 4.5 compatibility spec:
    "Implementations are permitted, but not required, to support Infs and NaNs
    in their floating-point computations."
+   also a problem for current shader
  – how to deal with inside positions? maybe indicate being inside by some
    sort of colored shade over the scene
  - do we want transparency?
+ - is thread-safing even necessary?
