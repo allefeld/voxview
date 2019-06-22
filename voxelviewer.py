@@ -610,14 +610,3 @@ class VoxelViewer:
         self._destroyShader()
         # destroy environment
         self._destroyEnvironment()
-
-
-if __name__ == "__main__":
-    # example user program
-    vv = VoxelViewer()
-
-    vol = vv.addVolume("sLPcomb-radek-X-C-PxC.nii")
-    vv.addSurface(vol, 0.0174, 'b')
-
-    time.sleep(1)
-    vv.addSurface(vol, 0.007, 'r')
