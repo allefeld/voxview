@@ -590,11 +590,21 @@ class VoxelViewer:
                     # window close
                     running = False
                 elif event.type == sdl2.SDL_KEYDOWN:
-                    if event.key.keysym.sym == sdl2.SDLK_ESCAPE:
-                        # keyboard ESC
+                    key = event.key
+                    if key.repeat == 0:
+                        if key.keysym.sym == sdl2.SDLK_ESCAPE:
+                            # keyboard ESC
+                            running = False
+                        elif key.keysym.sym == sdl2.SDLK_f:
+                            # keyboard f/F
+                            self._toggleFullscreen()
+                elif event.type == sdl2.SDL_CONTROLLERBUTTONDOWN:
+                    button = event.cbutton.button
+                    if button == sdl2.SDL_CONTROLLER_BUTTON_BACK:
+                        # controller back
                         running = False
-                    elif event.key.keysym.sym == sdl2.SDLK_f:
-                        # keyboard f/F
+                    elif button == sdl2.SDL_CONTROLLER_BUTTON_START:
+                        # controller start
                         self._toggleFullscreen()
             # update frame state
             self._updateFrameState()
