@@ -229,7 +229,7 @@ class VoxelViewer:
             #   rotation & scaling matrix (voxel -> world)
             AM = volume.affine[:3, :3]
             # translation (voxel -> world), world position of voxel [0, 0, 0]
-            AO = volume.affine[:3, 3]
+            AO = volume.affine[:3, 3].astype(np.float16)
             # inverse rotation & scaling (world -> voxel)
             AiM = np.linalg.inv(AM)
             # volume array element
@@ -250,10 +250,10 @@ class VoxelViewer:
             # pass affine transformation
             gl.glUniformMatrix3fv(
                 gl.glGetUniformLocation(self.program, v + ".AM"),
-                1, gl.GL_FALSE, *AM.flatten('F'))
+                1, gl.GL_FALSE, struct.pack('f' * 9, *AM.flatten('F')))
             gl.glUniform3f(
                 gl.glGetUniformLocation(self.program, v + ".AO"),
-                *AO)
+                *AO.astype(np.float16))
             gl.glUniformMatrix3fv(
                 gl.glGetUniformLocation(self.program, v + ".AiM"),
                 1, gl.GL_FALSE, struct.pack('f' * 9, *AiM.flatten('F')))
@@ -480,17 +480,17 @@ class VoxelViewer:
     # time:         time at current / last frame
     # frame:        number of current frame
     # camPos:       position of the camera in world space
-    # camTheta:     azimuth of camera view
-    # camPhi:       elevation of camera view
+    # camTheta:     azimuth of camera view (0 = positive x)
+    # camPhi:       elevation of camera view (0 = horizontal)
     # camFovF:      field-of-view factor of camera view
 
     def _initializeFrameState(self):
         self.startTime = time.time()
         self.time = self.startTime
         self.frame = 0
-        self.camPos = np.array([0., 200., 0.])
-        self.camTheta = np.pi / 2
-        self.camPhi = 0
+        self.camTheta = np.radians(135.)        # similar to isometric view
+        self.camPhi = -np.arctan(1 / np.sqrt(2))
+        self.camPos = -10. * self._camDirections()[2]
         self.camFovF = np.tan(np.radians(30.))
         self.camSpeed = 20
 
@@ -502,11 +502,11 @@ class VoxelViewer:
         """
         # ray from the camera through the center of the frame
         center = np.array([np.cos(self.camTheta) * np.cos(self.camPhi),
-                           -np.sin(self.camTheta) * np.cos(self.camPhi),
+                           np.sin(self.camTheta) * np.cos(self.camPhi),
                            np.sin(self.camPhi)])
         # horizontal direction in the frame:
         #  vector in the xy-plane that is orthogonal to the center ray
-        horizontal = np.array([-np.sin(self.camTheta),
+        horizontal = np.array([np.sin(self.camTheta),
                                -np.cos(self.camTheta),
                                0])
         # vertical direction in the frame: orthogonal to center & horizontal
@@ -560,8 +560,8 @@ class VoxelViewer:
         # update camera
         # camera direction
         if self.frame > 1:
-            self.camTheta += VoxelViewer._deadzone(rs[0], 0.25) * 3. * td
-            self.camPhi += -VoxelViewer._deadzone(rs[1], 0.25) * 3. * td
+            self.camTheta += -VoxelViewer._deadzone(rs[0], 0.25) * 2. * td
+            self.camPhi += -VoxelViewer._deadzone(rs[1], 0.25) * 2. * td
         self.camPhi = np.clip(self.camPhi, -np.pi / 2, np.pi / 2)
         # directions of camera coordinate system
         horizontal, vertical, center = self._camDirections()
@@ -572,7 +572,7 @@ class VoxelViewer:
                             + lt * vertical
                             - rt * vertical) * self.camSpeed * td
         # camera speed
-        self.camSpeed *= 1.2 ** (du - dd)
+        self.camSpeed *= 1.05 ** (du - dd)
 
     # --------------------------------------------------------------------------
 
