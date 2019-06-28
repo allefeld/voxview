@@ -382,14 +382,28 @@ class VoxelViewer:
 
         ``volumeSpec`` can be
 
-        – a 2-tuple containing a 3d numpy array (voxel data) and a 4×4 numpy
+        – a 2-tuple containing a 3d numpy array (voxel data) and a 4 × 4 numpy
         array (affine transformation from augmented voxel indices into world
         coordinates),
+
+        – just the 3d numpy data array, in which case the affine transformation
+        is set to the 4 × 4 identity matrix
 
         – or the name of a file that can be read by nibabel.
 
         The data should be 3- or 4-dimensional. For 4d, a single ``scan`` must
         be selected.
+
+        The affine transformation is a 4 × 4 matrix that describes
+        size and shape of voxels as well as
+        the origin of voxel space. In the simplest case, it has the form
+        ::
+            dx 0  0  ox
+            0  dy 0  oy
+            0  0  dz oz
+            0  0  0  1
+        where dx, dy, dz define the size of a voxel along the three
+        dimensions, and ox, oy, oz the position of the voxel (0, 0, 0).
 
         :param volumeSpec:
             source of volume data
@@ -401,9 +415,12 @@ class VoxelViewer:
             numeric ID of the volume
         """
         # create Volume from volumeSpec
-        if type(volumeSpec) == tuple:
+        if (type(volumeSpec) == tuple) and (len(volumeSpec) == 2):
             data = volumeSpec[0]
             affine = volumeSpec[1]
+        elif type(volumeSpec) == np.ndarray:
+            data = volumeSpec
+            affine = np.eye(4)
         elif type(volumeSpec) == str:
             import nibabel  # only introduce dependency if functionality is used
             img = nibabel.load(volumeSpec)
@@ -543,8 +560,8 @@ class VoxelViewer:
         # update camera
         # camera direction
         if self.frame > 1:
-            self.camTheta += VoxelViewer._deadzone(rs[0], 0.25) * 0.05
-            self.camPhi += -VoxelViewer._deadzone(rs[1], 0.25) * 0.05
+            self.camTheta += VoxelViewer._deadzone(rs[0], 0.25) * 3. * td
+            self.camPhi += -VoxelViewer._deadzone(rs[1], 0.25) * 3. * td
         self.camPhi = np.clip(self.camPhi, -np.pi / 2, np.pi / 2)
         # directions of camera coordinate system
         horizontal, vertical, center = self._camDirections()
@@ -553,7 +570,7 @@ class VoxelViewer:
             self.camPos += (VoxelViewer._deadzone(ls[0], 0.25) * horizontal
                             - VoxelViewer._deadzone(ls[1], 0.25) * center
                             + lt * vertical
-                            - rt * vertical) * td * self.camSpeed
+                            - rt * vertical) * self.camSpeed * td
         # camera speed
         self.camSpeed *= 1.2 ** (du - dd)
 
