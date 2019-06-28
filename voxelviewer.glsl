@@ -371,10 +371,9 @@ void mainImage(in vec2 fragCoord,
         vec3 vr = vol[volID].AiM * ray;
         vec3 vdir = normalize(vr);      // as a normalized vector
         // find intersection of ray with surface in voxel space
-        float vd;    // for voxel-space distance
+        float vd;   // for voxel-space distance
         vec3 vn;    // for voxel-space normal vector
-        gridtracer(volID, surf[sid].threshold, vcp, vdir,
-                   vd, vn);
+        gridtracer(volID, surf[sid].threshold, vcp, vdir, vd, vn);
         // world-space distance
         float d = vd / length(vr);
         // if new distance is smaller

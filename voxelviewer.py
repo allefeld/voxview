@@ -148,9 +148,7 @@ class VoxelViewer:
         gl.glShaderSource(self.vertexShader, vertexShaderSource)
         gl.glCompileShader(self.vertexShader)
         if (gl.glGetShaderiv(self.vertexShader, gl.GL_COMPILE_STATUS)
-                == gl.GL_TRUE):
-            print("*** OpenGL vertex shader compiled.")
-        else:
+                != gl.GL_TRUE):
             raise RuntimeError(
                 "OpenGL vertex shader could not be compiled\n"
                 + gl.glGetShaderInfoLog(self.vertexShader).decode('ASCII'))
@@ -165,9 +163,7 @@ class VoxelViewer:
         gl.glShaderSource(self.fragmentShader, fragmentShaderSource)
         gl.glCompileShader(self.fragmentShader)
         if (gl.glGetShaderiv(self.fragmentShader, gl.GL_COMPILE_STATUS)
-                == gl.GL_TRUE):
-            print("*** OpenGL fragment shader compiled.")
-        else:
+                != gl.GL_TRUE):
             raise RuntimeError(
                 "OpenGL fragment shader could not be compiled\n"
                 + gl.glGetShaderInfoLog(self.fragmentShader).decode('ASCII'))
@@ -180,9 +176,7 @@ class VoxelViewer:
         gl.glBindFragDataLocation(self.program, 0, b"fragColor")
         # link the program
         gl.glLinkProgram(self.program)
-        if gl.glGetProgramiv(self.program, gl.GL_LINK_STATUS) == gl.GL_TRUE:
-            print("*** OpenGL program linked.")
-        else:
+        if gl.glGetProgramiv(self.program, gl.GL_LINK_STATUS) != gl.GL_TRUE:
             raise RuntimeError(
                 "OpenGL program could not be linked\n"
                 + gl.glGetProgramInfoLog(self.program).decode('ASCII'))
@@ -231,7 +225,6 @@ class VoxelViewer:
         for volumeID, volume in enumerate(vol):
             # get data
             data = volume.data.astype(np.float16)
-            data[np.isnan(data)] = 0    # TODO
             # get affine transformation
             #   rotation & scaling matrix (voxel -> world)
             AM = volume.affine[:3, :3]
@@ -383,7 +376,7 @@ class VoxelViewer:
         self.surfaces = []
         self.sceneChanged = None
 
-    def addVolume(self, volumeSpec, scan=0):
+    def addVolume(self, volumeSpec, scan=0, nanValue=None):
         """
         add volume to the list of volumes
 
@@ -402,6 +395,8 @@ class VoxelViewer:
             source of volume data
         :param int scan:
             selected volume for 4d data
+        :param float nanValue:
+            value to replace NaNs in the data (optional)
         :return:
             numeric ID of the volume
         """
@@ -420,6 +415,8 @@ class VoxelViewer:
             raise NotImplementedError("Data must be 3d or 4d.")
         if data.ndim == 4:
             data = data[:, :, :, scan]
+        if nanValue is not None:
+            data[np.isnan(data)] = nanValue
         volume = Volume(data, affine)
         # add it to the volume list and obtain index
         # or obtain index of existing identical element
@@ -477,7 +474,8 @@ class VoxelViewer:
         self.camPos = np.array([0., 200., 0.])
         self.camTheta = np.pi / 2
         self.camPhi = 0
-        self.camFovF = None
+        self.camFovF = np.tan(np.radians(30.))
+        self.camSpeed = 20
 
     def _camDirections(self):
         """
@@ -523,6 +521,8 @@ class VoxelViewer:
         self.frame += 1
 
         # get controller input
+        lt = sdl2.SDL_GameControllerGetAxis(
+            self.gc, sdl2.SDL_CONTROLLER_AXIS_TRIGGERLEFT) / 32767
         rt = sdl2.SDL_GameControllerGetAxis(
             self.gc, sdl2.SDL_CONTROLLER_AXIS_TRIGGERRIGHT) / 32767
         ls = (np.array([
@@ -552,10 +552,10 @@ class VoxelViewer:
         if self.frame > 1:
             self.camPos += (VoxelViewer._deadzone(ls[0], 0.25) * horizontal
                             - VoxelViewer._deadzone(ls[1], 0.25) * center
-                            + du * vertical
-                            - dd * vertical) * td * 20
-        # camera field of view -> zoom
-        self.camFovF = np.tan(np.radians(30 * (1 - rt)))
+                            + lt * vertical
+                            - rt * vertical) * td * self.camSpeed
+        # camera speed
+        self.camSpeed *= 1.2 ** (du - dd)
 
     # --------------------------------------------------------------------------
 
