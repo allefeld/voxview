@@ -1,9 +1,8 @@
- TODO:
+TODO:
  - optimization, gridtracing only up to dMin
  – sphere-tracing based cube tracer, to show cuboid and spheroid voxels, and
    joined voxels
  - enable taking the surface color from another volume
- - also a problem for current shader using inf and nan
  – how to deal with inside positions? maybe indicate being inside by some
    sort of colored shade over the scene
  - do we want transparency? maybe only for one surface

@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 
 from voxelviewer import VoxelViewer
+import numpy as np
 
 # example user program
 vv = VoxelViewer()
@@ -10,11 +11,17 @@ vv = VoxelViewer()
 # vv.addSurface(vol, 0.0174, 'b')
 # vv.addSurface(vol, 0.007, 'r')
 
-vol = vv.addVolume("mni_icbm152_nlin_asym_09c/mni_icbm152_gm_tal_nlin_asym_09c.nii")
+a = np.array([[1, 0, 0,   0],
+              [0, 1, 0, -18],
+              [0, 0, 1,  18],
+              [0, 0, 0,   1]])
+vol = vv.addVolume((np.array([[[1]]]), a))
+vv.addSurface(vol, 0.5, 'r')
+vol = vv.addVolume("mni_icbm152_nlin_asym_09c"
+                   "/mni_icbm152_gm_tal_nlin_asym_09c.nii")
 vv.addSurface(vol, 0.333, [0.5, 0.5, 0.5])
 
 
-# import numpy as np
 # x = np.array([
 #     [
 #         [np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan],
@@ -55,7 +62,6 @@ vv.addSurface(vol, 0.333, [0.5, 0.5, 0.5])
 # vol = vv.addVolume((x, 10. * np.eye(4)), nanValue=0)
 # vv.addSurface(vol, 2.5, 'y')
 
-# import numpy as np
 # x = np.random.rand(20, 20, 20)
 # vol = vv.addVolume((x, 10. * np.eye(4)))
 # vv.addSurface(vol, 0.6, 'y')
@@ -67,7 +73,6 @@ vv.addSurface(vol, 0.333, [0.5, 0.5, 0.5])
 # vol = vv.addVolume("/home/ca/Store/lab/dicom/nifti/09 T2w_SPC SE.nii")
 # vv.addSurface(vol, 2745., 'g')
 
-# import numpy as np
 # x = np.array([
 #     [
 #         [1, 1, 1],

@@ -444,8 +444,34 @@ class VoxelViewer:
             volumeID = self.volumes.index(volume)
         # indicate scene change
         self.sceneChanged = True
+        # adjust camera position
+        self.adjustCamera()
         # return the index as the volume ID
         return volumeID
+
+    def adjustCamera(self):
+        """
+        change the camera position (not the direction)
+        such that all volumes are in view,
+        and the camera speed accordingly
+        """
+        # compute world positions of volume corners
+        xyz = np.zeros((3, 0))
+        for volume in self.volumes:
+            shape = np.array(volume.data.shape)
+            affine = volume.affine
+            i, j, k = np.meshgrid([-0.5, shape[0] - 0.5],
+                                  [-0.5, shape[1] - 0.5],
+                                  [-0.5, shape[2] - 0.5], indexing='ij')
+            ijk = np.vstack((i.flatten(), j.flatten(), k.flatten()))
+            xyz = np.hstack((xyz, affine[:3, :3] @ ijk + affine[:3, 3, None]))
+        # compute centroid
+        c = np.mean(xyz, axis=1)
+        # compute maximum distance from centroid
+        d = max(np.sqrt(np.sum((xyz.T - c) ** 2, axis=1)))
+        # set camera position & speed
+        self.camPos = c - 2. * d * self._camDirections()[2]
+        self.camSpeed = d / 3.
 
     def addSurface(self, volumeID, threshold, colorSpec):
         """
@@ -490,9 +516,9 @@ class VoxelViewer:
         self.frame = 0
         self.camTheta = np.radians(135.)        # similar to isometric view
         self.camPhi = -np.arctan(1 / np.sqrt(2))
-        self.camPos = -10. * self._camDirections()[2]
+        self.camPos = np.array([0, 0, 0])
         self.camFovF = np.tan(np.radians(30.))
-        self.camSpeed = 20
+        self.camSpeed = np.linalg.norm(self.camPos) / 5.
 
     def _camDirections(self):
         """
@@ -619,7 +645,7 @@ class VoxelViewer:
                     button = event.cbutton.button
                     if button == sdl2.SDL_CONTROLLER_BUTTON_BACK:
                         # controller back
-                        running = False
+                        self.adjustCamera()
                     elif button == sdl2.SDL_CONTROLLER_BUTTON_START:
                         # controller start
                         self._toggleFullscreen()
