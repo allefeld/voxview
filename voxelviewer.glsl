@@ -1,5 +1,4 @@
 #version 130
-#extension GL_ARB_arrays_of_arrays : enable
 
 // for debugging, see main()
 vec4 error = vec4(0., 0., 0., 0.);
@@ -49,11 +48,8 @@ const vec3 lightDir[4] = vec3[4](
     vec3(1., 1., -1.));
 
 
-// utility constants  TODO: can this be relied upon?
 // numerical infinity
 const float inf = 1. / 0.;
-// numerical not a number
-const float nan = 0. / 0;
 
 
 // background of scene
@@ -86,16 +82,17 @@ bool cubetracer(in int volID, in float threshold, in vec3 pos, in vec3 posNext,
     // the lower vertex of the grid cube the line segment crosses
     ivec3 lower = ivec3(floor((pos + posNext) / 2.));
     // extract data from surrounding vertices
-    float v[2][2][2];
+    float v[8];
     float vMax = -inf;
     float vMin = inf;
     for (int i = 0; i < 2; i++) {
         for (int j = 0; j < 2; j++) {
             for (int k = 0; k < 2; k++) {
-                v[i][j][k] = texelFetch(vol[volID].data,
+                int index = i * 4 + j * 2 + k;
+                v[index] = texelFetch(vol[volID].data,
                     lower + ivec3(i, j, k), 0).r;
-                if (v[i][j][k] > vMax) { vMax = v[i][j][k]; }
-                if (v[i][j][k] < vMin) { vMin = v[i][j][k]; }
+                if (v[index] > vMax) { vMax = v[index]; }
+                if (v[index] < vMin) { vMin = v[index]; }
             }
         }
     }
@@ -107,15 +104,14 @@ bool cubetracer(in int volID, in float threshold, in vec3 pos, in vec3 posNext,
         return false;
     }
     // coefficients of trilinear interpolation within grid cube
-    float c     = + v[0][0][0];
-    float cx    = - v[0][0][0] + v[1][0][0];
-    float cy    = - v[0][0][0] + v[0][1][0];
-    float cz    = - v[0][0][0] + v[0][0][1];
-    float cxy   = + v[0][0][0] - v[0][1][0] - v[1][0][0] + v[1][1][0];
-    float cxz   = + v[0][0][0] - v[0][0][1] - v[1][0][0] + v[1][0][1];
-    float cyz   = + v[0][0][0] - v[0][0][1] - v[0][1][0] + v[0][1][1];
-    float cxyz  = - v[0][0][0] + v[0][0][1] + v[0][1][0] - v[0][1][1]
-                  + v[1][0][0] - v[1][0][1] - v[1][1][0] + v[1][1][1];
+    float c     = + v[0];
+    float cx    = - v[0] + v[4];
+    float cy    = - v[0] + v[2];
+    float cz    = - v[0] + v[1];
+    float cxy   = + v[0] - v[2] - v[4] + v[6];
+    float cxz   = + v[0] - v[1] - v[4] + v[5];
+    float cyz   = + v[0] - v[1] - v[2] + v[3];
+    float cxyz  = - v[0] + v[1] + v[2] - v[3] + v[4] - v[5] - v[6] + v[7];
     // coefficients for line through grid cube, p = a + b t, t in [0, 1]
     vec3 b = posNext - pos;
     vec3 a = pos - lower;
@@ -284,7 +280,7 @@ void gridtracer(in int volID, in float threshold, in vec3 start, in vec3 dir,
         // there is no intersection and the ray misses the extended grid.
         if (distMin == inf) {
             d = inf;
-            n = vec3(nan, nan, nan);
+            n = vec3(0, 0, 0);
             return;
         }
     }
@@ -331,13 +327,13 @@ void gridtracer(in int volID, in float threshold, in vec3 start, in vec3 dir,
         if (l > shape[0] + shape[1] + shape[2] + 3) {
             error = vec4(0., 1., 0., 0.);
             d = distMin;
-            n = vec3(nan, nan, nan);
+            n = vec3(0, 0, 0);
             return;
         }
     }
     // nothing found until the edge of the extended grid
     d = inf;
-    n = vec3(nan, nan, nan);
+    n = vec3(0, 0, 0);
     return;
 }
 
