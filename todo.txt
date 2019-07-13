@@ -1,9 +1,19 @@
 TODO:
- – sphere-tracing based cube tracer, to show cuboid and spheroid voxels, and
-   joined voxels
- - optimization, gridtracing only up to dMin
- - take the surface color from another volume
- – how to deal with inside positions? maybe indicate being inside by some
-   sort of colored shade over the scene
- - do we want transparency? maybe only for one surface
- - is thread-safing even necessary?
+
+– sphere-tracing based cube tracer, to show cuboid and spheroid voxels, and
+joined voxels
+
+- debug https://developer.nvidia.com/nsight-graphics
+
+- optimization, gridtracing only up to dMin
+
+- take the surface color from another volume
+
+– how to deal with inside positions? maybe indicate being inside by some
+sort of colored shade over the scene
+
+- do we want transparency? maybe only for one surface
+
+- is thread-safing even necessary?
+
+- zero-crop volumes

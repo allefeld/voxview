@@ -6,6 +6,9 @@ vec4 error = vec4(0., 0., 0., 0.);
 #define NV 0                // 0 replaced by len(self.volumes)
 #define NS 0                // 0 replaced by len(self.surfaces)
 
+#define sdf sdfSpheroid
+#define cubetracer cubetracerST
+
 uniform vec2  resolution;   // viewport resolution (in pixels)
 uniform float time;         // shader playback time (in seconds)
 uniform vec3  camPos;       // camera position
@@ -67,6 +70,7 @@ vec3 background(in vec3 ray) {
 //   Processes a line segment from the grid tracing algorithm, to find the point
 // at which the ray intersects with a surface defined within each grid cube.
 // The surface is defined by trilinear interpolation crossing the threshold.
+//   Accepts and returns coordinates in voxel space.
 // in
 //   int volID          ID of volume
 //   float threshold    threshold defining the surface
@@ -77,7 +81,7 @@ vec3 background(in vec3 ray) {
 //   vec3 n:            normal vector of the surface at the intersection point
 // returns
 //   bool:              whether an intersection point was found
-bool cubetracer(in int volID, in float threshold, in vec3 pos, in vec3 posNext,
+bool cubetracerTL(in int volID, in float threshold, in vec3 pos, in vec3 posNext,
                   out vec3 p, out vec3 n) {
     // the lower vertex of the grid cube the line segment crosses
     ivec3 lower = ivec3(floor((pos + posNext) / 2.));
@@ -88,7 +92,9 @@ bool cubetracer(in int volID, in float threshold, in vec3 pos, in vec3 posNext,
     for (int i = 0; i < 2; i++) {
         for (int j = 0; j < 2; j++) {
             for (int k = 0; k < 2; k++) {
+                // emulate three-dimensional array
                 int index = i * 4 + j * 2 + k;
+                // get voxel data from volume
                 v[index] = texelFetch(vol[volID].data,
                     lower + ivec3(i, j, k), 0).r;
                 if (v[index] > vMax) { vMax = v[index]; }
@@ -97,13 +103,15 @@ bool cubetracer(in int volID, in float threshold, in vec3 pos, in vec3 posNext,
         }
     }
     // quick check whether there can be a threshold crossing at all
-    if (vMax < threshold) {
+    if (sign(vMin - threshold) == sign(vMax - threshold)) {
         return false;
     }
-    if (vMin > threshold) {
-        return false;
-    }
-    // coefficients of trilinear interpolation within grid cube
+    // coefficients for line segment through grid cube, p = a + b t, t in [0, 1]
+    // coordinates translated to unit cube
+    vec3 b = posNext - pos;
+    vec3 a = pos - lower;
+    // coefficients of trilinear interpolation within unit cube, f(x, y, z)
+    // x, y, z in [0, 1]
     float c     = + v[0];
     float cx    = - v[0] + v[4];
     float cy    = - v[0] + v[2];
@@ -112,10 +120,7 @@ bool cubetracer(in int volID, in float threshold, in vec3 pos, in vec3 posNext,
     float cxz   = + v[0] - v[1] - v[4] + v[5];
     float cyz   = + v[0] - v[1] - v[2] + v[3];
     float cxyz  = - v[0] + v[1] + v[2] - v[3] + v[4] - v[5] - v[6] + v[7];
-    // coefficients for line through grid cube, p = a + b t, t in [0, 1]
-    vec3 b = posNext - pos;
-    vec3 a = pos - lower;
-    // of trilinear interpolation along line through grid cube
+    // coefficients of trilinear interpolation along line through unit cube
     // f(t) = d0 + d1 t + d2 t² + d3 t³
     float d0 = c + cx * a.x + cy * a.y + cz * a.z
              + cxy * a.x * a.y + cxz * a.x * a.z + cyz * a.y * a.z
@@ -129,7 +134,7 @@ bool cubetracer(in int volID, in float threshold, in vec3 pos, in vec3 posNext,
              + cxyz * (a.x * b.y * b.z + a.y * b.x * b.z + b.x * b.y * a.z);
     float d3 = cxyz * b.x * b.y * b.z;
     // search for threshold crossing along the line segment
-    // method using extrema, adapted from "Algorithm 3" in
+    // via method using extrema: "Algorithm 3" in
     //   Marmitt et al. Fast and accurate ray-voxel intersection techniques for
     // iso-surface ray tracing. In Vision, Modeling, and Visualization 2004.
     // http://hodad.bioen.utah.edu/~wald/Publications/2004/iso/IsoIsec_VMV2004.pdf
@@ -154,7 +159,6 @@ bool cubetracer(in int volID, in float threshold, in vec3 pos, in vec3 posNext,
                 // no threshold crossing -> advance to [tm t1]
                 t0 = tm;
                 f0 = fm;
-                // [I'm too fucking "smart" for my own good.]
             } else {
                 // threshold crossing -> calculate it in [t0 tm]
                 t1 = tm;
@@ -183,11 +187,10 @@ bool cubetracer(in int volID, in float threshold, in vec3 pos, in vec3 posNext,
         return false;
     }
     // now we can be sure that the segment [t0 t1] contains a threshold crossing
-    // calculate it via repeated linear interpolation
-    // approximate threshold
+    // approximate it via repeated linear interpolation
     // f = f0 + (f1 - f0) * (t - t0) / (t1 - t0)  =  threshold
     float t = t0 + (t1 - t0) * (threshold - f0) / (f1 - f0);
-    for (int i = 1; i <= 2; i++) {
+    for (int i = 1; i <= 2; i++) {  // 2 iterations are generally sufficient
         float f = d0 + (d1 + (d2 + d3 * t) * t) * t;
         if (sign(f - threshold) == sign(f0 - threshold)) {
             // approximation too low -> look for it in [t, t1]
@@ -201,7 +204,7 @@ bool cubetracer(in int volID, in float threshold, in vec3 pos, in vec3 posNext,
         // new interpolation
         t = t0 + (t1 - t0) * (threshold - f0) / (f1 - f0);
     }
-    // position at which the threshold crossing occurs
+    // position within unit cube at which the threshold crossing occurs
     p = a + b * t;
     // trilinear gradient at position
     vec3 grad = vec3(cx + cxy * p.y + cxz * p.z + cxyz * p.y * p.z,
@@ -215,8 +218,126 @@ bool cubetracer(in int volID, in float threshold, in vec3 pos, in vec3 posNext,
         // looking at surface from inside
         n = normalize(grad);
     }
+    // re-translate coordinates to voxel space
     p += lower;
     return true;
+}
+
+
+// signed distance function for spheres placed at voxel positions
+// with above-threshold values (8 vertices of grid cube)
+// in
+//   vec3 p             position within unit cube
+//   float v[8]         voxel data at surrounding vertices
+//   float threshold    threshold selecting voxels
+// out
+//   float d            signed distance of p
+//   vec3 n             normalized gradient of signed distance at p
+void sdfSpheroid(in vec3 p, in float v[8], in float threshold,
+                out float d, out vec3 n) {
+    d = inf;
+    for (int i = 0; i < 2; i++) {
+        for (int j = 0; j < 2; j++) {
+            for (int k = 0; k < 2; k++) {
+                // emulate three-dimensional array
+                int index = i * 4 + j * 2 + k;
+                // voxel data above-threshold?
+                if (v[index] >= threshold) {
+                    // distance from sphere at voxel center with radius 0.5
+                    float di = length(p - vec3(i, j, k)) - 0.5;
+                    // form minimum across vertices to form sdf union
+                    if (di < d) {
+                        d = di;
+                        // also record normalized gradient
+                        n = normalize(p - vec3(i, j, k));
+                    }
+                }
+            }
+        }
+    }
+}
+
+float sdfCuboid(vec3 p, float v[8], float threshold) {
+    float dMin = inf;
+    for (int i = 0; i < 2; i++) {
+        for (int j = 0; j < 2; j++) {
+            for (int k = 0; k < 2; k++) {
+                int index = i * 4 + j * 2 + k;
+                if (v[index] >= threshold) {
+                    vec3 D = abs(p - vec3(i, j, k)) - 0.5;
+                    float d = length(max(D, 0.0));
+                    dMin = min(dMin, d);
+                }
+            }
+        }
+    }
+    return dMin;
+}
+
+// cube tracing algorithm – sphere tracing of signed distance function
+//   Processes a line segment from the grid tracing algorithm, to find the point
+// at which the ray intersects with a surface defined within each grid cube.
+// The surface is defined by a signed distance function.
+//   Accepts and returns coordinates in voxel space.
+// in
+//   int volID          ID of volume
+//   float threshold    threshold defining the surface
+//   vec3 pos:          entry point into grid cube (can be within)
+//   vec3 posNext:      exit point from the grid cube
+// out
+//   vec3 p:            intersection point of ray and surface
+//   vec3 n:            normal vector of the surface at the intersection point
+// returns
+//   bool:              whether an intersection point was found
+bool cubetracerST(in int volID, in float threshold, in vec3 pos, in vec3 posNext,
+                  out vec3 p, out vec3 n) {
+    // the lower vertex of the grid cube the line segment crosses
+    ivec3 lower = ivec3(floor((pos + posNext) / 2.));
+    // extract data from surrounding vertices
+    float v[8];
+    float vMax = -inf;
+    float vMin = inf;
+    for (int i = 0; i < 2; i++) {
+        for (int j = 0; j < 2; j++) {
+            for (int k = 0; k < 2; k++) {
+                // emulate three-dimensional array
+                int index = i * 4 + j * 2 + k;
+                // get voxel data from volume
+                v[index] = texelFetch(vol[volID].data,
+                    lower + ivec3(i, j, k), 0).r;
+                if (v[index] > vMax) { vMax = v[index]; }
+                if (v[index] < vMin) { vMin = v[index]; }
+            }
+        }
+    }
+    // quick check whether there is an above-threshold voxel value at all
+    if (vMax < threshold) {
+        return false;
+    }
+    // coefficients for line segment through grid cube, p = a + b t, t in [0, 1]
+    // coordinates translated to unit cube
+    vec3 b = posNext - pos;
+    vec3 a = pos - lower;
+    // sphere tracing
+    float t = 0.;
+    int steps = 0;
+    while ((t <= 1.) && (steps < 100)) {
+        // compute position
+        p = a + b * t;
+        // compute signed distance function
+        float d;
+        sdf(p, v, threshold, d, n);
+        // if (almost) inside, surface found
+        if (d <= 1e-4) {
+            // re-translate coordinates to voxel space
+            p += lower;
+            return true;
+        }
+        // else, march along the line
+        t += d / length(b);
+        steps += 1;
+    }
+    return false;
 }
 
 
@@ -315,7 +436,7 @@ void gridtracer(in int volID, in float threshold, in vec3 start, in vec3 dir,
         // 3) Process the line segment.
         vec3 p;
         if (cubetracer(volID, threshold, pos, posNext,
-                       p, n)) {
+                p, n)) {
             d = dot((p - start), dir);
             return;
         }

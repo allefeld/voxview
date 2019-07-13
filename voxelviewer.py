@@ -598,7 +598,7 @@ class VoxelViewer:
                             + lt * vertical
                             - rt * vertical) * self.camSpeed * td
         # camera speed
-        self.camSpeed *= 1.05 ** (du - dd)
+        self.camSpeed *= 1.1 ** (du - dd)
 
     # --------------------------------------------------------------------------
 
