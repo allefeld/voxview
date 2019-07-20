@@ -97,7 +97,9 @@ class VoxelViewer:
             b'',
             sdl2.SDL_WINDOWPOS_UNDEFINED, sdl2.SDL_WINDOWPOS_UNDEFINED,
             800, 600,
-            sdl2.SDL_WINDOW_OPENGL | sdl2.SDL_WINDOW_RESIZABLE)
+            sdl2.SDL_WINDOW_OPENGL
+            | sdl2.SDL_WINDOW_RESIZABLE
+            | sdl2.SDL_WINDOW_MAXIMIZED)
         sdl2.SDL_ShowCursor(sdl2.SDL_DISABLE)
         # create OpenGL context
         self.context = sdl2.SDL_GL_CreateContext(self.window)
@@ -415,13 +417,13 @@ class VoxelViewer:
             numeric ID of the volume
         """
         # create Volume from volumeSpec
-        if (type(volumeSpec) == tuple) and (len(volumeSpec) == 2):
+        if isinstance(volumeSpec, tuple) and len(volumeSpec) == 2:
             data = volumeSpec[0]
             affine = volumeSpec[1]
-        elif type(volumeSpec) == np.ndarray:
+        elif isinstance(volumeSpec, np.ndarray):
             data = volumeSpec
             affine = np.eye(4)
-        elif type(volumeSpec) == str:
+        elif isinstance(volumeSpec, str):
             import nibabel  # only introduce dependency if functionality is used
             img = nibabel.load(volumeSpec)
             data = img.get_fdata()
