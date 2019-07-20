@@ -6,9 +6,6 @@ vec4 error = vec4(0., 0., 0., 0.);
 #define NV 0                // 0 replaced by len(self.volumes)
 #define NS 0                // 0 replaced by len(self.surfaces)
 
-#define sdf sdfSpheroid
-#define cubetracer cubetracerST
-
 uniform vec2  resolution;   // viewport resolution (in pixels)
 uniform float time;         // shader playback time (in seconds)
 uniform vec3  camPos;       // camera position
@@ -38,6 +35,9 @@ struct Surface {
     vec3 kd;        // diffuse
     vec3 ks;        // specular
     float alpha;    // shininess
+    // voxel shape
+    float cs;       // cube scale
+    float ss;       // sphere scale
 };
 uniform Surface surf[NS];
 
@@ -57,9 +57,9 @@ const float inf = 1. / 0.;
 
 // background of scene
 // in
-//   vec3 ray:  view direction
+//   vec3 ray   view direction
 // returns
-//   vec3:      color
+//   vec3       color
 vec3 background(in vec3 ray) {
     // black to green-blue in z-direction
     return (1. + ray.z) / 2. * vec3(0., 0.5, 1.);
@@ -73,15 +73,15 @@ vec3 background(in vec3 ray) {
 //   Accepts and returns coordinates in voxel space.
 // in
 //   int volID          ID of volume
-//   float threshold    threshold defining the surface
-//   vec3 pos:          entry point into grid cube (can be within)
-//   vec3 posNext:      exit point from the grid cube
+//   int surfID     ID of surface
+//   vec3 pos           entry point into grid cube (can be within)
+//   vec3 posNext       exit point from the grid cube
 // out
-//   vec3 p:            intersection point of ray and surface
-//   vec3 n:            normal vector of the surface at the intersection point
+//   vec3 p             intersection point of ray and surface
+//   vec3 n             normal vector of the surface at the intersection point
 // returns
-//   bool:              whether an intersection point was found
-bool cubetracerTL(in int volID, in float threshold, in vec3 pos, in vec3 posNext,
+//   bool               whether an intersection point was found
+bool cubetracerTL(in int volID, in int surfID, in vec3 pos, in vec3 posNext,
                   out vec3 p, out vec3 n) {
     // the lower vertex of the grid cube the line segment crosses
     ivec3 lower = ivec3(floor((pos + posNext) / 2.));
@@ -102,6 +102,8 @@ bool cubetracerTL(in int volID, in float threshold, in vec3 pos, in vec3 posNext
             }
         }
     }
+    // the threshold
+    float threshold = surf[surfID].threshold;
     // quick check whether there can be a threshold crossing at all
     if (sign(vMin - threshold) == sign(vMax - threshold)) {
         return false;
@@ -224,54 +226,46 @@ bool cubetracerTL(in int volID, in float threshold, in vec3 pos, in vec3 posNext
 }
 
 
-// signed distance function for spheres placed at voxel positions
+// signed distance function for rounded cubes placed at voxel positions
 // with above-threshold values (8 vertices of grid cube)
+// see http://www.iquilezles.org/www/articles/distfunctions/distfunctions.htm
 // in
-//   vec3 p             position within unit cube
-//   float v[8]         voxel data at surrounding vertices
-//   float threshold    threshold selecting voxels
+//   vec3 p         position within unit cube
+//   float v[8]     voxel data at surrounding vertices
+//   float th       threshold selecting voxels
+//   float cs       cube scale (edge length of cube part)
+//   float ss       sphere scale (diameter of sphere part)
 // out
-//   float d            signed distance of p
-//   vec3 n             normalized gradient of signed distance at p
-void sdfSpheroid(in vec3 p, in float v[8], in float threshold,
+//   float d        signed distance of p
+//   vec3 n         normalized gradient of signed distance at p
+void sdfVoxel(in vec3 p, in float v[8], in float th, in float cs, in float ss,
                 out float d, out vec3 n) {
     d = inf;
+    vec3 x;
     for (int i = 0; i < 2; i++) {
         for (int j = 0; j < 2; j++) {
             for (int k = 0; k < 2; k++) {
                 // emulate three-dimensional array
                 int index = i * 4 + j * 2 + k;
                 // voxel data above-threshold?
-                if (v[index] >= threshold) {
-                    // distance from sphere at voxel center with radius 0.5
-                    float di = length(p - vec3(i, j, k)) - 0.5;
+                if (v[index] >= th) {
+                    // signed distance from rounded cube at voxel center
+                    // valid only outside
+                    vec3 xi = p - vec3(i, j, k);
+                    xi = max(abs(xi) - 0.5 * cs, 0.) * sign(xi);
+                    float di = length(xi) - 0.5 * ss;
                     // form minimum across vertices to form sdf union
                     if (di < d) {
                         d = di;
-                        // also record normalized gradient
-                        n = normalize(p - vec3(i, j, k));
+                        // also record gradient
+                        x = xi;
                     }
                 }
             }
         }
     }
-}
-
-float sdfCuboid(vec3 p, float v[8], float threshold) {
-    float dMin = inf;
-    for (int i = 0; i < 2; i++) {
-        for (int j = 0; j < 2; j++) {
-            for (int k = 0; k < 2; k++) {
-                int index = i * 4 + j * 2 + k;
-                if (v[index] >= threshold) {
-                    vec3 D = abs(p - vec3(i, j, k)) - 0.5;
-                    float d = length(max(D, 0.0));
-                    dMin = min(dMin, d);
-                }
-            }
-        }
-    }
-    return dMin;
+    // normalized gradient is normal vector
+    n = normalize(x);
 }
 
 // cube tracing algorithm – sphere tracing of signed distance function
@@ -280,16 +274,16 @@ float sdfCuboid(vec3 p, float v[8], float threshold) {
 // The surface is defined by a signed distance function.
 //   Accepts and returns coordinates in voxel space.
 // in
-//   int volID          ID of volume
-//   float threshold    threshold defining the surface
-//   vec3 pos:          entry point into grid cube (can be within)
-//   vec3 posNext:      exit point from the grid cube
+//   int volID      ID of volume
+//   int surfID     ID of surface
+//   vec3 pos       entry point into grid cube (can be within)
+//   vec3 posNext   exit point from the grid cube
 // out
-//   vec3 p:            intersection point of ray and surface
-//   vec3 n:            normal vector of the surface at the intersection point
+//   vec3 p         intersection point of ray and surface
+//   vec3 n         normal vector of the surface at the intersection point
 // returns
-//   bool:              whether an intersection point was found
-bool cubetracerST(in int volID, in float threshold, in vec3 pos, in vec3 posNext,
+//   bool           whether an intersection point was found
+bool cubetracerST(in int volID, in int surfID, in vec3 pos, in vec3 posNext,
                   out vec3 p, out vec3 n) {
     // the lower vertex of the grid cube the line segment crosses
     ivec3 lower = ivec3(floor((pos + posNext) / 2.));
@@ -310,6 +304,8 @@ bool cubetracerST(in int volID, in float threshold, in vec3 pos, in vec3 posNext
             }
         }
     }
+    // the threshold
+    float threshold = surf[surfID].threshold;
     // quick check whether there is an above-threshold voxel value at all
     if (vMax < threshold) {
         return false;
@@ -321,12 +317,12 @@ bool cubetracerST(in int volID, in float threshold, in vec3 pos, in vec3 posNext
     // sphere tracing
     float t = 0.;
     int steps = 0;
-    while ((t <= 1.) && (steps < 100)) {
+    while ((t <= 1.) && (steps < 1000)) {
         // compute position
         p = a + b * t;
         // compute signed distance function
         float d;
-        sdf(p, v, threshold, d, n);
+        sdfVoxel(p, v, threshold, surf[surfID].cs, surf[surfID].ss, d, n);
         // if (almost) inside, surface found
         if (d <= 1e-4) {
             // re-translate coordinates to voxel space
@@ -349,17 +345,19 @@ bool cubetracerST(in int volID, in float threshold, in vec3 pos, in vec3 posNext
 //   The line segments are then processed by `cubetracer` to find the point at
 // which the ray intersects with a surface defined within each grid cube.
 // in
-//   int volID          ID of volume
-//   float threshold    threshold defining the surface
-//   vec3 start:        from where
-//   vec3 dir:          in which direction (normalized!)
+//   int volID      ID of volume
+//   int surfID     ID of surface
+//   vec3 start     from where
+//   vec3 dir       in which direction (normalized!)
 // out
-//   float d:           at what distance
-//                        The value inf indicates that no surface was
-//                      encountered. In that case, n is undefined.
-//   vec3 n:            normal vector of the surface
-void gridtracer(in int volID, in float threshold, in vec3 start, in vec3 dir,
+//   float d        at what distance
+//                    The value inf indicates that no surface was
+//                  encountered. In that case, n is undefined.
+//   vec3 n         normal vector of the surface
+void gridtracer(in int volID, in int surfID, in vec3 start, in vec3 dir,
                 out float d, out vec3 n) {
+    // which cubetracer to use
+    bool trilinear = (surf[surfID].cs < 0) || (surf[surfID].ss < 0);
     // extent of volume
     vec3 shape = textureSize(vol[volID].data, 0);
     // 1) Get the first point.
@@ -435,10 +433,18 @@ void gridtracer(in int volID, in float threshold, in vec3 start, in vec3 dir,
         }
         // 3) Process the line segment.
         vec3 p;
-        if (cubetracer(volID, threshold, pos, posNext,
-                p, n)) {
-            d = dot((p - start), dir);
-            return;
+        if (trilinear) {
+            if (cubetracerTL(volID, surfID, pos, posNext,
+                    p, n)) {
+                d = dot((p - start), dir);
+                return;
+            }
+        } else {
+            if (cubetracerST(volID, surfID, pos, posNext,
+                    p, n)) {
+                d = dot((p - start), dir);
+                return;
+            }
         }
         // The next point becomes the new start point.
         pos = posNext;
@@ -461,10 +467,10 @@ void gridtracer(in int volID, in float threshold, in vec3 start, in vec3 dir,
 
 // main function
 // in
-//   vec2 fragCoord:    coordinates of the current (pixel)
+//   vec2 fragCoord     coordinates of the current (pixel)
 //                      values are in [0.5, resolution - 0.5]
 // out
-//   vec4 fragColor:    color the current fragment (pixel) should be shown in
+//   vec4 fragColor     color the current fragment (pixel) should be shown in
 void mainImage(in vec2 fragCoord,
                out vec4 fragColor) {
     // translate pixel indices into coordinate system where (0, 0) is
@@ -490,7 +496,7 @@ void mainImage(in vec2 fragCoord,
         // find intersection of ray with surface in voxel space
         float vd;   // for voxel-space distance
         vec3 vn;    // for voxel-space normal vector
-        gridtracer(volID, surf[sid].threshold, vcp, vdir, vd, vn);
+        gridtracer(volID, sid, vcp, vdir, vd, vn);
         // world-space distance
         float d = vd / length(vr);
         // if new distance is smaller

@@ -1,9 +1,6 @@
 TODO:
 
-– sphere-tracing based cube tracer, to show cuboid and spheroid voxels, and
-joined voxels
-
-- debug https://developer.nvidia.com/nsight-graphics
+- rounded voxels? sphere <-> cube
 
 - optimization, gridtracing only up to dMin
 
@@ -17,3 +14,5 @@ sort of colored shade over the scene
 - is thread-safing even necessary?
 
 - zero-crop volumes
+
+- why is it black inside of voxels?

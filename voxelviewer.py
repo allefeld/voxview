@@ -59,6 +59,8 @@ class Surface:
     kd:        np.array     # Phong diffuse RGB
     ks:        np.array     # Phong specular RGB
     alpha:     float        # Phong shininess
+    cs:        float        # Voxel cube scale
+    ss:        float        # Voxel sphere scale
 
 
 class VoxelViewer:
@@ -287,6 +289,13 @@ class VoxelViewer:
             gl.glUniform1f(
                 gl.glGetUniformLocation(self.program, s + ".alpha"),
                 surface.alpha)
+            # pass voxel parameters
+            gl.glUniform1f(
+                gl.glGetUniformLocation(self.program, s + ".cs"),
+                surface.cs)
+            gl.glUniform1f(
+                gl.glGetUniformLocation(self.program, s + ".ss"),
+                surface.ss)
 
         # indicate that scene state is implemented
         self.sceneChanged = False
@@ -380,7 +389,7 @@ class VoxelViewer:
 
     def addVolume(self, volumeSpec, scan=0, nanValue=None):
         """
-        add volume to the list of volumes
+        add volume
 
         ``volumeSpec`` can be
 
@@ -477,7 +486,7 @@ class VoxelViewer:
 
     def addSurface(self, volumeID, threshold, colorSpec):
         """
-        add surface to the list of surfaces
+        add surface
 
         :param int volumeID:
             numeric ID of volume to use as basis, returned by addVolume
@@ -494,7 +503,37 @@ class VoxelViewer:
         ks = np.array([1., 1., 1.]) * 0.1
         alpha = 10.
         # create Surface and add it to the list
-        surface = Surface(volumeID, threshold, ka, kd, ks, alpha)
+        surface = Surface(volumeID, threshold, ka, kd, ks, alpha, -1., -1.)
+        self.surfaces.append(surface)
+        # indicate scene change
+        self.sceneChanged = True
+
+    def addVoxels(self, volumeID, threshold, colorSpec,
+                  cubeScale=0.8, sphereScale=0.2):
+        """
+        add voxels
+
+        :param int volumeID:
+            numeric ID of volume to use as basis, returned by addVolume
+        :param float threshold:
+            threshold applied to volume data
+        :param colorSpec:
+            color of the surface specified using matplotlib.colors syntax
+        :param cubeScale:
+            size of cubic part of voxel shape
+        :param sphereScale:
+            size of spherical part of voxel shape
+        """
+        # obtain RGB color from colorSpec
+        color = mc.to_rgb(colorSpec)
+        # calculate Phong illumination coefficients from color
+        ka = np.array(color) * 0.3
+        kd = np.array(color) * 0.3
+        ks = np.array([1., 1., 1.]) * 0.1
+        alpha = 10.
+        # create Surface and add it to the list
+        surface = Surface(volumeID, threshold, ka, kd, ks, alpha,
+                          cubeScale, sphereScale)
         self.surfaces.append(surface)
         # indicate scene change
         self.sceneChanged = True
