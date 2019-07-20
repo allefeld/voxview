@@ -1,0 +1,1 @@
+[![Codacy Badge](https://api.codacy.com/project/badge/Grade/bc36f75b1ce54d878f8791db3a11a34e)](https://www.codacy.com?utm_source=github.com&amp;utm_medium=referral&amp;utm_content=allefeld/voxview&amp;utm_campaign=Badge_Grade)
