@@ -1,10 +1,6 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-
 """
 voxel viewer aka "brain game"
 """
-
 
 from dataclasses import dataclass
 import numpy as np
@@ -137,7 +133,7 @@ class VoxelViewer:
                             np.array([1., 1., 1.]) * 0.3,
                             np.array([1., 1., 1.]) * 0.3,
                             np.array([1., 1., 1.]) * 0.1,
-                            10.)]
+                            10., 1., 1.)]
 
         # create and compile vertex shader
         #   This vertex shader simply puts vertices at our 2D positions.
@@ -320,7 +316,7 @@ class VoxelViewer:
         w = ctypes.c_int()
         h = ctypes.c_int()
         sdl2.SDL_GetWindowSize(self.window, w, h)
-        gl.glViewport(0, 0, w, h)
+        gl.glViewport(0, 0, w.value, h.value)
 
         # update uniforms
         # update generic uniforms
